@@ -10,9 +10,11 @@ import { IconTooltipButton } from "./icon-tooltip-button"
 export function TopBar({
   sidebarCollapsed,
   onToggleSidebar,
+  onAvatarClick,
 }: {
   sidebarCollapsed: boolean
   onToggleSidebar: () => void
+  onAvatarClick?: () => void
 }) {
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
@@ -56,7 +58,12 @@ export function TopBar({
           Week
           <ChevronDown className="h-3 w-3 text-text-muted" />
         </button>
-        <button className="flex h-7 w-7 items-center justify-center rounded-full bg-app-accent text-xs font-semibold text-app-accent-foreground">
+        <button
+          type="button"
+          onClick={onAvatarClick}
+          className="flex h-7 w-7 items-center justify-center rounded-full bg-app-accent text-xs font-semibold text-app-accent-foreground transition-opacity hover:opacity-90"
+          aria-label="Open account settings"
+        >
           TS
         </button>
       </div>

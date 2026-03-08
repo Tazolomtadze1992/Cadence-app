@@ -64,6 +64,8 @@ export function AppSidebar({
   onUpdateTask,
   onDeleteTask,
   onQuickAddTask,
+  onDragTaskStart,
+  onDragTaskEnd,
 }: {
   collapsed: boolean
   onToggleSidebar: () => void
@@ -72,6 +74,8 @@ export function AppSidebar({
   onUpdateTask?: (id: string, updates: Partial<Task>) => void
   onDeleteTask?: (id: string) => void
   onQuickAddTask?: (preset: { tag?: string; date?: Date; schedule?: string }) => void
+  onDragTaskStart?: (task: Task) => void
+  onDragTaskEnd?: () => void
 }) {
   const [sidebarView, setSidebarView] = useState<"tasks" | "agenda">("tasks")
   const [slideDirection, setSlideDirection] = useState<1 | -1>(1)
@@ -351,7 +355,7 @@ export function AppSidebar({
               </div>
 
               {/* Scheduled groups */}
-              <div className="px-1.5 py-2">
+              <div className="px-1.5 py-3">
                 {scheduledGroups.map((group) => {
                   const groupTasks = bucketMap[group.label] ?? []
                   const count = groupTasks.length
@@ -378,8 +382,14 @@ export function AppSidebar({
                               onToggleComplete={() => onToggleComplete?.(t.id)}
                               onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
                               isDraggable={t.startMinutes == null || t.endMinutes == null}
-                              onDragStart={() => setDraggingTaskId(t.id)}
-                              onDragEnd={() => setDraggingTaskId(null)}
+                              onDragStart={() => {
+                                setDraggingTaskId(t.id)
+                                onDragTaskStart?.(t)
+                              }}
+                              onDragEnd={() => {
+                                setDraggingTaskId(null)
+                                onDragTaskEnd?.()
+                              }}
                               isDragging={draggingTaskId === t.id}
                             />
                           ))}
@@ -390,10 +400,9 @@ export function AppSidebar({
                 })}
               </div>
 
-              <div className="mx-3 my-1.5 h-px bg-border/20" />
 
               {/* Categories section */}
-              <div className="flex-1 overflow-y-auto px-1.5 py-2">
+              <div className="flex-1 overflow-y-auto px-1.5 py-3">
                 <div className="group/cat-header mb-0.5 flex w-full items-center px-2">
                   <button
                     onClick={() => setCategoriesOpen(!categoriesOpen)}
@@ -454,8 +463,14 @@ export function AppSidebar({
                                 onToggleComplete={() => onToggleComplete?.(t.id)}
                                 onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
                                 isDraggable={t.startMinutes == null || t.endMinutes == null}
-                                onDragStart={() => setDraggingTaskId(t.id)}
-                                onDragEnd={() => setDraggingTaskId(null)}
+                                onDragStart={() => {
+                                  setDraggingTaskId(t.id)
+                                  onDragTaskStart?.(t)
+                                }}
+                                onDragEnd={() => {
+                                  setDraggingTaskId(null)
+                                  onDragTaskEnd?.()
+                                }}
                                 isDragging={draggingTaskId === t.id}
                               />
                             ))}
@@ -514,7 +529,7 @@ export function AppSidebar({
               transition={slideTransition}
               className="absolute inset-0 overflow-hidden"
             >
-              <AgendaView />
+              <AgendaView tasks={tasks} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -773,14 +788,14 @@ const PRIORITY_COLORS: Record<string, string> = {
   low: "#3b82f6",
 }
 
-const PRIORITY_ICON_MAP: Record<string, string> = {
+export const PRIORITY_ICON_MAP: Record<string, string> = {
   high: "/icons/high.svg",
   medium: "/icons/medium.svg",
   low: "/icons/low.svg",
   none: "/icons/none.svg",
 }
 
-function PriorityIcon({ priority, className }: { priority: string; className?: string }) {
+export function PriorityIcon({ priority, className }: { priority: string; className?: string }) {
   const src = PRIORITY_ICON_MAP[priority] ?? PRIORITY_ICON_MAP.none
   return <img src={src} alt="" className={cn("shrink-0", className)} />
 }
@@ -1184,6 +1199,9 @@ function TaskActionsDropdown({
   )
 }
 
+const DRAG_IMAGE_TRANSPARENT =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+
 function TaskRow({
   task,
   onToggleComplete,
@@ -1201,6 +1219,17 @@ function TaskRow({
   onDragEnd?: () => void
   isDragging?: boolean
 }) {
+  const emptyDragImageRef = useRef<HTMLImageElement | null>(null)
+
+  useEffect(() => {
+    const img = new Image()
+    img.src = DRAG_IMAGE_TRANSPARENT
+    emptyDragImageRef.current = img
+    return () => {
+      emptyDragImageRef.current = null
+    }
+  }, [])
+
   const dueDateFormatted = useMemo(() => {
     try {
       return format(new Date(task.dueDate + "T00:00:00"), "d MMM")
@@ -1212,6 +1241,9 @@ function TaskRow({
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.setData("text/plain", task.id)
     e.dataTransfer.effectAllowed = "move"
+    if (emptyDragImageRef.current) {
+      e.dataTransfer.setDragImage(emptyDragImageRef.current, 0, 0)
+    }
     onDragStart?.()
   }
 
@@ -1219,8 +1251,7 @@ function TaskRow({
     <div
       className={cn(
         "group/task flex w-full items-start gap-2.5 rounded-lg px-2 py-2 transition-colors duration-150 hover:bg-surface-2/30",
-        isDraggable && "cursor-grab active:cursor-grabbing",
-        isDragging && "opacity-50"
+        isDraggable && "cursor-grab active:cursor-grabbing"
       )}
       draggable={isDraggable ?? false}
       onDragStart={isDraggable ? handleDragStart : undefined}
@@ -1257,7 +1288,7 @@ function TaskRow({
           {task.tag && (
             <div className="group/chip relative flex items-center justify-center rounded bg-surface-2/60 p-1">
               <Tag className="h-3 w-3" style={{ color: task.tagColor }} />
-              <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-text opacity-0 shadow-md transition-opacity duration-150 group-hover/chip:opacity-100">
+              <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text opacity-0 shadow-md transition-opacity duration-150 group-hover/chip:opacity-100">
                 {task.tag}
               </span>
             </div>
@@ -1266,7 +1297,7 @@ function TaskRow({
           {task.repeat && task.repeat !== "none" && (
             <div className="group/chip relative flex items-center justify-center rounded bg-surface-2/60 p-1">
               <Repeat className="h-3 w-3 text-[#3b82f6]" />
-              <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-text opacity-0 shadow-md transition-opacity duration-150 group-hover/chip:opacity-100">
+              <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text opacity-0 shadow-md transition-opacity duration-150 group-hover/chip:opacity-100">
                 {REPEAT_LABELS[task.repeat] ?? task.repeat}
               </span>
             </div>
@@ -1275,7 +1306,7 @@ function TaskRow({
           {task.priority && task.priority !== "none" && (
             <div className="group/chip relative flex items-center justify-center rounded bg-surface-2/60 p-1">
               <PriorityIcon priority={task.priority} className="h-3 w-3" />
-              <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-text capitalize opacity-0 shadow-md transition-opacity duration-150 group-hover/chip:opacity-100">
+              <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text capitalize opacity-0 shadow-md transition-opacity duration-150 group-hover/chip:opacity-100">
                 {task.priority}
               </span>
             </div>

@@ -15,153 +15,28 @@ import {
   isToday,
 } from "date-fns"
 import { cn } from "@/lib/utils"
-import { ChevronLeft, ChevronRight, RotateCcw, MoreHorizontal, Repeat, Tag, Calendar } from "lucide-react"
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-type AgendaTask = {
-  id: string
-  title: string
-  date: string // ISO yyyy-MM-dd
-  startMinutes?: number
-  endMinutes?: number
-  tagColor?: string
-  repeat?: boolean
-  priority?: "low" | "med" | "high"
-  completed?: boolean
-}
-
-// ─── Mock Data ───────────────────────────────────────────────────────────────
-const MOCK_TASKS: AgendaTask[] = [
-  {
-    id: "1",
-    title: "Example",
-    date: "2026-02-27",
-    tagColor: "#a855f7",
-    repeat: true,
-    priority: "high",
-    completed: false,
-  },
-  {
-    id: "2",
-    title: "example 2",
-    date: "2026-02-27",
-    tagColor: "#a855f7",
-    priority: "med",
-    completed: false,
-  },
-  {
-    id: "3",
-    title: "Morning standup",
-    date: "2026-02-26",
-    startMinutes: 9 * 60,
-    endMinutes: 9 * 60 + 30,
-    tagColor: "#3b82f6",
-    completed: false,
-  },
-]
+import { ChevronLeft, ChevronRight, RotateCcw, Calendar, Clock } from "lucide-react"
+import type { Task } from "@/app/page"
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-function formatTime(minutes: number): string {
-  const h = Math.floor(minutes / 60)
+function formatTime12(minutes: number): string {
+  const h = Math.floor(minutes / 60) % 24
   const m = minutes % 60
-  return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`
+  const period = h >= 12 ? "pm" : "am"
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+  return `${h12}:${m.toString().padStart(2, "0")} ${period}`
+}
+
+function formatDuration(startMinutes: number, endMinutes: number): string {
+  const diff = endMinutes - startMinutes
+  const hours = Math.floor(diff / 60)
+  const mins = diff % 60
+  if (hours === 0) return `${mins}m`
+  if (mins === 0) return `${hours}h`
+  return `${hours}h ${mins}m`
 }
 
 const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
-
-// ─── Priority Icon ───────────────────────────────────────────────────────────
-function PriorityIcon({ priority }: { priority: "low" | "med" | "high" }) {
-  return (
-    <div className="flex h-5 w-5 items-center justify-center rounded bg-surface-2">
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-        <circle cx="3" cy="6" r="1.5" fill={priority === "high" ? "#f97316" : "#6b7280"} />
-        <circle cx="9" cy="6" r="1.5" fill={priority === "high" ? "#f97316" : "#6b7280"} />
-        <circle cx="6" cy="3" r="1.5" fill={priority !== "low" ? "#f97316" : "#6b7280"} />
-        <circle cx="6" cy="9" r="1.5" fill="#6b7280" />
-      </svg>
-    </div>
-  )
-}
-
-// ─── Task Row ────────────────────────────────────────────────────────────────
-function TaskRow({
-  task,
-  onToggle,
-}: {
-  task: AgendaTask
-  onToggle: (id: string) => void
-}) {
-  const hasTime = task.startMinutes !== undefined && task.endMinutes !== undefined
-
-  return (
-    <div className="group/task flex w-full items-start gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-surface-2/50">
-      {/* Checkbox */}
-      <button
-        onClick={() => onToggle(task.id)}
-        className={cn(
-          "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
-          task.completed
-            ? "border-app-accent bg-app-accent"
-            : "border-text-faint hover:border-text-muted"
-        )}
-      >
-        {task.completed && (
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-            <path
-              d="M2 5L4 7L8 3"
-              stroke="white"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        )}
-      </button>
-
-      {/* Content */}
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "truncate text-sm font-medium",
-              task.completed ? "text-text-muted line-through" : "text-text"
-            )}
-          >
-            {task.title}
-          </span>
-          {hasTime && (
-            <span className="shrink-0 text-xs text-text-muted">
-              {formatTime(task.startMinutes!)}–{formatTime(task.endMinutes!)}
-            </span>
-          )}
-        </div>
-
-        {/* Icon chips */}
-        <div className="flex items-center gap-1.5">
-          {task.tagColor && (
-            <div
-              className="flex h-5 w-5 items-center justify-center rounded"
-              style={{ backgroundColor: `color-mix(in srgb, ${task.tagColor} 20%, transparent)` }}
-            >
-              <Tag className="h-3 w-3" style={{ color: task.tagColor }} />
-            </div>
-          )}
-          {task.repeat && (
-            <div className="flex h-5 w-5 items-center justify-center rounded bg-surface-2">
-              <Repeat className="h-3 w-3 text-text-muted" />
-            </div>
-          )}
-          {task.priority && <PriorityIcon priority={task.priority} />}
-        </div>
-      </div>
-
-      {/* More button */}
-      <button className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-faint opacity-0 transition-all hover:bg-surface-2 hover:text-text-muted group-hover/task:opacity-100">
-        <MoreHorizontal className="h-4 w-4" />
-      </button>
-    </div>
-  )
-}
 
 // ─── Empty State ─────────────────────────────────────────────────────────────
 function EmptyState({ onAddTask }: { onAddTask?: () => void }) {
@@ -180,6 +55,29 @@ function EmptyState({ onAddTask }: { onAddTask?: () => void }) {
       >
         Add task
       </button>
+    </div>
+  )
+}
+
+// ─── Scheduled task row (left bar, title, start time, duration) ───────────────
+function ScheduledTaskRow({ task }: { task: Task }) {
+  const color = task.tagColor ?? "#6b7280"
+  const start = task.startMinutes!
+  const end = task.endMinutes!
+
+  return (
+    <div className="relative flex w-full items-stretch gap-0 overflow-hidden rounded-md">
+      <div
+        className="absolute left-0 top-1/2 h-10 w-[4px] -translate-y-1/2 rounded-full"
+        style={{ backgroundColor: color }}
+      />
+      <div className="min-w-0 flex-1 pl-4 pr-3 py-2 flex flex-col gap-0.5">
+        <p className="truncate text-sm font-medium text-text" style={{ color }}>
+          {task.title}
+        </p>
+        <p className="text-xs text-text-muted">{formatTime12(start)}</p>
+        <p className="text-xs text-text-muted">{formatDuration(start, end)}</p>
+      </div>
     </div>
   )
 }
@@ -205,7 +103,6 @@ function MiniCalendar({
   const calendarStart = startOfWeek(monthStart, { weekStartsOn: 0 })
   const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 0 })
 
-  // Build weeks
   const weeks: Date[][] = []
   let day = calendarStart
   while (day <= calendarEnd) {
@@ -217,12 +114,10 @@ function MiniCalendar({
     weeks.push(week)
   }
 
-  // Check if selected date's week
   const selectedWeekStart = startOfWeek(selectedDate, { weekStartsOn: 0 })
 
   return (
     <div className="px-3 pb-4 pt-2">
-      {/* Header */}
       <div className="mb-3 flex items-center justify-between">
         <span className="text-sm font-semibold text-text">
           {format(currentMonth, "MMMM yyyy")}
@@ -249,7 +144,6 @@ function MiniCalendar({
         </div>
       </div>
 
-      {/* Weekday labels */}
       <div className="mb-1 grid grid-cols-7 gap-0">
         {WEEKDAYS.map((d) => (
           <div key={d} className="py-1 text-center text-xs font-medium text-text-faint">
@@ -258,7 +152,6 @@ function MiniCalendar({
         ))}
       </div>
 
-      {/* Day grid */}
       <div className="grid grid-cols-7 gap-0">
         {weeks.map((week, wi) => {
           const isSelectedWeek = isSameDay(startOfWeek(week[0], { weekStartsOn: 0 }), selectedWeekStart)
@@ -273,11 +166,9 @@ function MiniCalendar({
                 onClick={() => onSelectDate(d)}
                 className={cn(
                   "relative flex h-8 w-full items-center justify-center text-xs font-medium transition-colors",
-                  // Week highlight
                   isSelectedWeek && di === 0 && "rounded-l-md",
                   isSelectedWeek && di === 6 && "rounded-r-md",
                   isSelectedWeek && "bg-surface-2/50",
-                  // Day states
                   !isCurrentMonth && "text-text-faint",
                   isCurrentMonth && !isSelected && "text-text-muted hover:text-text",
                   isSelected && "text-white",
@@ -298,10 +189,9 @@ function MiniCalendar({
 }
 
 // ─── Main Component ──────────────────────────────────────────────────────────
-export function AgendaView() {
+export function AgendaView({ tasks = [] }: { tasks?: Task[] }) {
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date())
   const [currentMonth, setCurrentMonth] = useState<Date>(() => new Date())
-  const [tasks, setTasks] = useState<AgendaTask[]>(MOCK_TASKS)
 
   const handlePrevMonth = useCallback(() => {
     setCurrentMonth((prev) => subMonths(prev, 1))
@@ -319,32 +209,43 @@ export function AgendaView() {
 
   const handleSelectDate = useCallback((date: Date) => {
     setSelectedDate(date)
-    // Also update month view if needed
     if (!isSameMonth(date, currentMonth)) {
       setCurrentMonth(date)
     }
   }, [currentMonth])
 
-  const handleToggleTask = useCallback((id: string) => {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
-    )
-  }, [])
-
-  // Filter tasks for selected date
   const selectedDateStr = format(selectedDate, "yyyy-MM-dd")
-  const filteredTasks = useMemo(
-    () => tasks.filter((t) => t.date === selectedDateStr),
+
+  const tasksForDay = useMemo(
+    () => tasks.filter((t) => t.dueDate === selectedDateStr),
     [tasks, selectedDateStr]
   )
 
-  // Separate scheduled vs anytime tasks
-  const scheduledTasks = filteredTasks.filter((t) => t.startMinutes !== undefined)
-  const anytimeTasks = filteredTasks.filter((t) => t.startMinutes === undefined)
+  const scheduledTasks = useMemo(
+    () =>
+      tasksForDay.filter(
+        (t) =>
+          t.startMinutes != null &&
+          t.endMinutes != null &&
+          !t.completed
+      ),
+    [tasksForDay]
+  )
+
+  const unscheduledTasks = useMemo(
+    () =>
+      tasksForDay.filter(
+        (t) =>
+          (t.startMinutes == null || t.endMinutes == null) &&
+          !t.completed
+      ),
+    [tasksForDay]
+  )
+
+  const totalItems = scheduledTasks.length + unscheduledTasks.length
 
   return (
     <div className="flex h-full flex-col">
-      {/* Mini Calendar */}
       <MiniCalendar
         selectedDate={selectedDate}
         onSelectDate={handleSelectDate}
@@ -354,49 +255,67 @@ export function AgendaView() {
         onResetToToday={handleResetToToday}
       />
 
-      {/* Divider */}
-      <div className="mx-3 h-px bg-border/30" />
-
-      {/* Section header */}
-      <div className="flex items-center justify-between px-4 py-4">
+      {/* Date header + item count */}
+      <div className="flex items-center justify-between px-4 py-3">
         <h2 className="text-base font-semibold text-text">
           {format(selectedDate, "EEE d MMM")}
         </h2>
-        {filteredTasks.length > 0 && (
+        {totalItems > 0 && (
           <span className="text-xs text-text-muted">
-            {filteredTasks.length} item{filteredTasks.length !== 1 ? "s" : ""}
+            {totalItems} item{totalItems !== 1 ? "s" : ""}
           </span>
         )}
       </div>
 
-      {/* Task list or empty state */}
-      <div className="flex-1 overflow-y-auto px-2">
-        {filteredTasks.length === 0 ? (
+      <div className="flex-1 overflow-y-auto px-3 py-3">
+        {totalItems === 0 ? (
           <EmptyState />
         ) : (
-          <div className="space-y-2">
-            {/* Anytime section */}
-            {anytimeTasks.length > 0 && (
+          <div className="space-y-4">
+            {scheduledTasks.length > 0 && (
               <div>
-                <div className="flex items-center gap-2 px-2 pb-2">
-                  <div className="flex h-5 w-5 items-center justify-center">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" className="text-text-faint" />
-                      <circle cx="8" cy="8" r="2" fill="currentColor" className="text-text-faint" />
-                    </svg>
-                  </div>
-                  <span className="text-xs font-medium text-text-muted">Anytime</span>
+                <div className="mb-2 flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-text-faint" />
+                  <span className="text-xs font-medium text-text-muted">Scheduled</span>
                 </div>
-                {anytimeTasks.map((task) => (
-                  <TaskRow key={task.id} task={task} onToggle={handleToggleTask} />
-                ))}
+                <div className="space-y-2">
+                  {scheduledTasks.map((task) => (
+                    <ScheduledTaskRow key={task.id} task={task} />
+                  ))}
+                </div>
               </div>
             )}
 
-            {/* Scheduled tasks */}
-            {scheduledTasks.map((task) => (
-              <TaskRow key={task.id} task={task} onToggle={handleToggleTask} />
-            ))}
+            {unscheduledTasks.length > 0 && (
+              <div>
+                <div className="mb-2 flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-text-faint" />
+                  <span className="text-xs font-medium text-text-muted">Unscheduled</span>
+                </div>
+                <div className="space-y-2">
+                  {unscheduledTasks.map((task) => (
+                    <div
+                      key={task.id}
+                      className="relative flex w-full items-stretch gap-0 overflow-hidden rounded-md"
+                    >
+                      <div
+                        className="absolute left-0 top-1/2 h-10 w-[4px] -translate-y-1/2 rounded-full"
+                        style={{ backgroundColor: task.tagColor ?? "#6b7280" }}
+                      />
+                      <div className="min-w-0 flex-1 pl-4 pr-3 py-2 flex flex-col gap-0.5">
+                        <p
+                          className="truncate text-sm font-medium"
+                          style={{ color: task.tagColor ?? undefined }}
+                        >
+                          {task.title}
+                        </p>
+                        <p className="text-xs text-text-muted">No time set</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

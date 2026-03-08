@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { createPortal } from "react-dom"
 import { startOfWeek, addDays, isToday, getDate, format } from "date-fns"
 import { Clock, Calendar, Repeat } from "lucide-react"
+import { PriorityIcon } from "@/components/chrono/sidebar"
 import { cn } from "@/lib/utils"
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -46,6 +47,8 @@ interface CalendarEvent {
   endMinutes?: number
   title: string
   tagColor?: string
+  tag?: string
+  priority?: string
 }
 
 type DragState =
@@ -137,6 +140,7 @@ export function CalendarGrid({
   onSidebarTaskDrop,
   externalEvents,
   anchorDate,
+  draggingSidebarTask,
 }: {
   onDragCreate?: (payload: DragCreatePayload) => void
   onEventMove?: (payload: EventMovePayload) => void
@@ -145,10 +149,10 @@ export function CalendarGrid({
   onSidebarTaskDrop?: (payload: SidebarTaskDropPayload) => void
   externalEvents?: CalendarEvent[]
   anchorDate?: Date
+  draggingSidebarTask?: CalendarEvent | null
 }) {
   const [currentMinutes, setCurrentMinutes] = useState<number | null>(null)
   const [todayDate, setTodayDate] = useState(() => new Date())
-  // Use anchorDate for week display, fallback to todayDate
   const displayAnchor = anchorDate ?? todayDate
   const events = externalEvents ?? []
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -159,6 +163,13 @@ export function CalendarGrid({
     startTime: number
     offsetMinutes: number
   } | null>(null)
+  const [pointerPos, setPointerPos] = useState<{ x: number; y: number } | null>(null)
+  const [sidebarDropTarget, setSidebarDropTarget] = useState<{
+    dayIndex: number
+    startMinutes: number
+    endMinutes: number
+  } | null>(null)
+  const [sidebarDragPointer, setSidebarDragPointer] = useState<{ x: number; y: number } | null>(null)
   const [hover, setHover] = useState<HoverState | null>(null)
   const [popover, setPopover] = useState<PopoverState>(null)
   const popoverHideTimer = useRef<number | null>(null)
@@ -171,6 +182,7 @@ export function CalendarGrid({
 
   // ---------- Shared card visuals (committed / preview / draft) ----------
   const defaultColor = "var(--color-app-accent, #888)"
+  const neutralCardColor = "var(--color-surface-2)"
 
   function cardBg(color: string, pct: number) {
     return `color-mix(in srgb, ${color} ${pct}%, transparent)`
@@ -187,6 +199,12 @@ export function CalendarGrid({
       backgroundColor: cardBg(color, 50),
     } as React.CSSProperties
   }
+
+  function getDragPreviewBg(color: string) {
+    return { backgroundColor: `color-mix(in srgb, ${color} 90%, transparent)` } as React.CSSProperties
+  }
+
+const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded-xs bg-border/30"
   // ---------------------------------------------------------------------
 
   const weekDays = useMemo(() => {
@@ -261,6 +279,13 @@ export function CalendarGrid({
   }, [drag])
 
   useEffect(() => {
+    if (!draggingSidebarTask) {
+      setSidebarDropTarget(null)
+      setSidebarDragPointer(null)
+    }
+  }, [draggingSidebarTask])
+
+  useEffect(() => {
     return () => {
       if (popoverHideTimer.current) window.clearTimeout(popoverHideTimer.current)
     }
@@ -297,13 +322,28 @@ export function CalendarGrid({
       const startMinutes = getMinutesFromY(e.clientY, dayIndex)
       const endMinutes = Math.min(startMinutes + DEFAULT_DROP_DURATION_MINUTES, MAX_MINUTES)
       onSidebarTaskDrop({ taskId, dayIndex, startMinutes, endMinutes })
+      setSidebarDropTarget(null)
+      setSidebarDragPointer(null)
     },
     [getDayIndexFromX, getMinutesFromY, onSidebarTaskDrop]
   )
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.dataTransfer.dropEffect = "move"
+  const handleDragOver = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = "move"
+      const dayIndex = getDayIndexFromX(e.clientX)
+      const startMinutes = getMinutesFromY(e.clientY, dayIndex)
+      const endMinutes = Math.min(startMinutes + DEFAULT_DROP_DURATION_MINUTES, MAX_MINUTES)
+      setSidebarDropTarget({ dayIndex, startMinutes, endMinutes })
+      setSidebarDragPointer({ x: e.clientX, y: e.clientY })
+    },
+    [getDayIndexFromX, getMinutesFromY]
+  )
+
+  const handleSidebarDragLeave = useCallback(() => {
+    setSidebarDropTarget(null)
+    setSidebarDragPointer(null)
   }, [])
 
   const handleGridPointerDown = useCallback(
@@ -312,6 +352,7 @@ export function CalendarGrid({
       e.preventDefault()
       const minutes = getMinutesFromY(e.clientY, dayIndex)
       isDragging.current = true
+      setPointerPos({ x: e.clientX, y: e.clientY })
       setDrag({ type: "create", dayIndex, anchorMinutes: minutes, currentMinutes: minutes + SNAP })
     },
     [getMinutesFromY]
@@ -367,6 +408,7 @@ export function CalendarGrid({
           const { ev, offsetMinutes } = pendingEventMove
           if (ev.startMinutes != null && ev.endMinutes != null) {
             isDragging.current = true
+            setPointerPos({ x: e.clientX, y: e.clientY })
             setDrag({
               type: "move",
               eventId: ev.id,
@@ -382,6 +424,9 @@ export function CalendarGrid({
       }
       if (!isDragging.current || !drag) return
       e.preventDefault()
+      if (drag.type === "move" || drag.type === "create") {
+        setPointerPos({ x: e.clientX, y: e.clientY })
+      }
       if (rafId) cancelAnimationFrame(rafId)
       rafId = requestAnimationFrame(() => {
         if (drag.type === "create") {
@@ -417,6 +462,7 @@ export function CalendarGrid({
       }
       if (!isDragging.current || !drag) return
       isDragging.current = false
+      setPointerPos(null)
       if (drag.type === "create") {
         const { startMinutes, endMinutes } = getCreateRange(drag)
         onDragCreate?.({ dayIndex: drag.dayIndex, startMinutes, endMinutes })
@@ -491,6 +537,7 @@ export function CalendarGrid({
         data-scroll-area
         onDragOver={handleDragOver}
         onDrop={handleSidebarDrop}
+        onDragLeave={handleSidebarDragLeave}
       >
         <div ref={gridRef} className="relative flex" style={{ minHeight: HOURS.length * HOUR_HEIGHT }}>
           {/* Time gutter */}
@@ -530,6 +577,21 @@ export function CalendarGrid({
                   <div key={hour} style={{ height: HOUR_HEIGHT }} />
                 ))}
 
+                {/* Drop target highlight (committed-task drag or sidebar drag) — same style for both */}
+                {(drag && (drag.type === "move" || drag.type === "create") && drag.dayIndex === dayIndex && (() => {
+                  const { top, height } = getEventPosition(
+                    drag.type === "create" ? getCreateRange(drag).startMinutes : drag.startMinutes,
+                    drag.type === "create" ? getCreateRange(drag).endMinutes : drag.endMinutes
+                  )
+                  return <div className={dropTargetHighlightClass} style={{ top, height }} />
+                })())}
+                {sidebarDropTarget && sidebarDropTarget.dayIndex === dayIndex && (() => {
+                  const { top, height } = getEventPosition(sidebarDropTarget.startMinutes, sidebarDropTarget.endMinutes)
+                  return (
+                    <div className={dropTargetHighlightClass} style={{ top, height }} />
+                  )
+                })()}
+
                 {/* Committed events — only show tasks with a duration (scheduled time block) */}
                 {events
                   .filter((ev) => ev.dayIndex === dayIndex && ev.startMinutes != null && ev.endMinutes != null)
@@ -564,6 +626,17 @@ export function CalendarGrid({
                           {formatTime12(ev.startMinutes!)} - {formatTime12(ev.endMinutes!)}
                         </p>
 
+                        {ev.priority && ev.priority !== "none" && (
+                          <div className="absolute right-3 bottom-5 flex items-center">
+                            <div className="group/chip relative flex shrink-0 items-center justify-center rounded-sm bg-secondary px-1.5 py-1.5">
+                              <PriorityIcon priority={ev.priority} className="h-2.5 w-2.5 opacity-70" />
+                              <span className="pointer-events-none absolute -top-7 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text capitalize opacity-0 shadow-md transition-opacity duration-150 group-hover/chip:opacity-100">
+                                {ev.priority}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
                         <div
                           className={cn(
                             "absolute inset-x-0 bottom-0 flex h-4 cursor-ns-resize items-end justify-center pb-1",
@@ -584,12 +657,11 @@ export function CalendarGrid({
                     )
                   })}
 
-                {/* Move/Resize preview (now matches committed visual) */}
-                {drag && (drag.type === "move" || drag.type === "resize") && drag.dayIndex === dayIndex && (() => {
+                {/* Resize preview (in-place; move uses floating preview) */}
+                {drag?.type === "resize" && drag.dayIndex === dayIndex && (() => {
                   const { top, height } = getEventPosition(drag.startMinutes, drag.endMinutes)
                   const sourceEvent = events.find((ev) => ev.id === drag.eventId)
                   const previewColor = sourceEvent?.tagColor || defaultColor
-
                   return (
                     <div
                       className="pointer-events-none absolute inset-x-1 overflow-hidden rounded-md pl-[11px] pr-3 py-2"
@@ -600,32 +672,27 @@ export function CalendarGrid({
                       <p className="truncate text-[10px] text-text-faint/50">
                         {formatTime12(drag.startMinutes)} - {formatTime12(drag.endMinutes)}
                       </p>
-
-                      {drag.type === "resize" && (
-                        <div className="absolute inset-x-0 bottom-0 flex h-4 items-end justify-center pb-1">
-                          <div className="h-1 w-8 rounded-full bg-white/20" />
-                        </div>
-                      )}
+                      <div className="absolute inset-x-0 bottom-0 flex h-4 items-end justify-center pb-1">
+                        <div className="h-1 w-8 rounded-full bg-white/20" />
+                      </div>
                     </div>
                   )
                 })()}
 
-                {/* Draft event while creating (now matches committed visual) */}
+                {/* Create-drag preview (inline only; neutral grey like untagged cards) */}
                 {drag?.type === "create" && drag.dayIndex === dayIndex && (() => {
                   const { startMinutes, endMinutes } = getCreateRange(drag)
                   const { top, height } = getEventPosition(startMinutes, endMinutes)
-
                   return (
                     <div
                       className="pointer-events-none absolute inset-x-1 overflow-hidden rounded-md pl-[11px] pr-3 py-2"
-                      style={{ top, height, ...getEventCardStyles(defaultColor) }}
+                      style={{ top, height, ...getEventCardStyles(neutralCardColor) }}
                     >
-                      <div className="absolute left-0 top-0 h-full w-[3px]" style={getStripeStyles(defaultColor)} />
+                      <div className="absolute left-0 top-0 h-full w-[3px]" style={getStripeStyles(neutralCardColor)} />
                       <p className="truncate text-xs font-medium text-text-faint/60">New Task</p>
                       <p className="truncate text-[10px] text-text-faint/50">
                         {formatTime12(startMinutes)} - {formatTime12(endMinutes)}
                       </p>
-
                       {height > 48 && (
                         <div className="absolute inset-x-0 bottom-2 flex justify-center">
                           <div className="h-[1px] w-4 rounded-full bg-white/10" />
@@ -703,6 +770,51 @@ export function CalendarGrid({
                 </div>,
                 document.body
               )
+            })()}
+
+            {/* Floating drag preview (move or sidebar task only; create uses inline preview) */}
+            {(() => {
+              const PREVIEW_OFFSET = 1
+              let node: React.ReactNode = null
+              if (drag?.type === "move" && pointerPos) {
+                const sourceEvent = events.find((e) => e.id === drag.eventId)
+                const color = sourceEvent?.tagColor ?? defaultColor
+                node = (
+                  <div
+                    className="pointer-events-none fixed z-[100] max-w-[200px] rounded-lg px-3 py-2 shadow-lg"
+                    style={{
+                      left: pointerPos.x + PREVIEW_OFFSET,
+                      top: pointerPos.y + PREVIEW_OFFSET,
+                      ...getDragPreviewBg(color),
+                    }}
+                  >
+                    <p className="truncate text-sm font-medium text-white">{sourceEvent?.title ?? "Event"}</p>
+                    <p className="mt-1 truncate text-xs text-white/80">
+                      {formatTime12(drag.startMinutes)} – {formatTime12(drag.endMinutes)}
+                    </p>
+                  </div>
+                )
+              } else if (draggingSidebarTask && (sidebarDragPointer || sidebarDropTarget)) {
+                const pos = sidebarDragPointer ?? { x: 0, y: 0 }
+                const color = draggingSidebarTask.tagColor ?? defaultColor
+                const timeStr = sidebarDropTarget
+                  ? `${formatTime12(sidebarDropTarget.startMinutes)} – ${formatTime12(sidebarDropTarget.endMinutes)}`
+                  : "—"
+                node = (
+                  <div
+                    className="pointer-events-none fixed z-[100] max-w-[200px] rounded-lg px-3 py-2 shadow-lg"
+                    style={{
+                      left: pos.x + PREVIEW_OFFSET,
+                      top: pos.y + PREVIEW_OFFSET,
+                      ...getDragPreviewBg(color),
+                    }}
+                  >
+                    <p className="truncate text-sm font-medium text-white">{draggingSidebarTask.title}</p>
+                    <p className="mt-1 truncate text-xs text-white/80">{timeStr}</p>
+                  </div>
+                )
+              }
+              return node ? createPortal(node, document.body) : null
             })()}
 
             {/* Current time indicator */}

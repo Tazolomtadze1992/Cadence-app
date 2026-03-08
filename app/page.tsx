@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo } from "react"
 import { startOfWeek, addDays, addWeeks, startOfDay, format } from "date-fns"
 import { AppSidebar } from "@/components/chrono/sidebar"
 import { TopBar } from "@/components/chrono/top-bar"
+import { AccountPanel } from "@/components/chrono/account-panel"
 import { CalendarGrid } from "@/components/chrono/calendar-grid"
 import { CommandBar } from "@/components/chrono/command-bar"
 import { SEED_TAGS } from "@/components/chrono/task-editor-modal"
@@ -32,6 +33,8 @@ export default function ChronoApp() {
   const [editingTask, setEditingTask] = useState<EditingTaskData | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date())
+  const [draggingSidebarTask, setDraggingSidebarTask] = useState<Task | null>(null)
+  const [accountPanelOpen, setAccountPanelOpen] = useState(false)
 
   const weekStart = useMemo(() => startOfWeek(anchorDate, { weekStartsOn: 0 }), [anchorDate])
 
@@ -229,7 +232,10 @@ export default function ChronoApp() {
       <TopBar
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+        onAvatarClick={() => setAccountPanelOpen(true)}
       />
+
+      <AccountPanel open={accountPanelOpen} onClose={() => setAccountPanelOpen(false)} />
 
       {/* Content: sidebar + calendar side by side */}
       <div className="flex flex-1 min-h-0">
@@ -242,6 +248,8 @@ export default function ChronoApp() {
           onUpdateTask={handleUpdateTask}
           onDeleteTask={handleDeleteTask}
           onQuickAddTask={handleSidebarQuickAdd}
+          onDragTaskStart={setDraggingSidebarTask}
+          onDragTaskEnd={() => setDraggingSidebarTask(null)}
         />
 
         {/* Calendar area */}
@@ -254,6 +262,7 @@ export default function ChronoApp() {
             onSidebarTaskDrop={handleSidebarTaskDrop}
             externalEvents={tasks}
             anchorDate={anchorDate}
+            draggingSidebarTask={draggingSidebarTask}
           />
 
           <CommandBar
