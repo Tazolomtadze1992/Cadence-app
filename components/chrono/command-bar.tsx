@@ -17,7 +17,7 @@ import {
 } from "date-fns"
 
 const COLLAPSED_HEIGHT = 52
-const TRANSITION = { duration: 0.24, ease: [0.25, 0.1, 0.25, 1] }
+const TRANSITION = { duration: 0.24, ease: [0.25, 0.1, 0.25, 1] as const }
 
 // ─── Date Parsing ────────────────────────────────────────────────────────────
 function parseNaturalDate(input: string): Date | null {

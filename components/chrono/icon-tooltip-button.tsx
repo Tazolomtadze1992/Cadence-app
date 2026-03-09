@@ -98,7 +98,10 @@ export function IconTooltipButton({
       onBlur={() => setIsHovered(false)}
     >
       <button
-        onClick={onClick}
+        onClick={() => {
+          setIsHovered(false)
+          onClick()
+        }}
         className={cn(
           "flex h-8 w-8 items-center justify-center rounded-sm transition-colors",
           isActive

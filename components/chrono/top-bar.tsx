@@ -7,14 +7,20 @@ import { format, getWeek } from "date-fns"
 import { cn } from "@/lib/utils"
 import { IconTooltipButton } from "./icon-tooltip-button"
 
+export type AppMode = "schedule" | "canvas"
+
 export function TopBar({
   sidebarCollapsed,
   onToggleSidebar,
   onAvatarClick,
+  appMode = "schedule",
+  onModeChange,
 }: {
   sidebarCollapsed: boolean
   onToggleSidebar: () => void
   onAvatarClick?: () => void
+  appMode?: AppMode
+  onModeChange?: (mode: AppMode) => void
 }) {
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
@@ -47,7 +53,7 @@ export function TopBar({
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <button
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
           className="flex h-7 items-center gap-1 rounded px-2 text-xs font-medium text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
@@ -58,6 +64,28 @@ export function TopBar({
           Week
           <ChevronDown className="h-3 w-3 text-text-muted" />
         </button>
+        <div className="hidden sm:flex rounded bg-surface-2/90 p-0.5">
+          <button
+            type="button"
+            onClick={() => onModeChange?.("schedule")}
+            className={cn(
+              "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
+              appMode === "schedule" ? "bg-surface text-text shadow-sm" : "text-text-muted hover:text-text"
+            )}
+          >
+            Schedule
+          </button>
+          <button
+            type="button"
+            onClick={() => onModeChange?.("canvas")}
+            className={cn(
+              "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
+              appMode === "canvas" ? "bg-surface text-text shadow-sm" : "text-text-muted hover:text-text"
+            )}
+          >
+            Canvas
+          </button>
+        </div>
         <button
           type="button"
           onClick={onAvatarClick}

@@ -15,7 +15,7 @@ import {
   isToday,
 } from "date-fns"
 import { cn } from "@/lib/utils"
-import { ChevronLeft, ChevronRight, RotateCcw, Calendar, Clock } from "lucide-react"
+import { ChevronLeft, ChevronRight, RotateCcw, Clock } from "lucide-react"
 import type { Task } from "@/app/page"
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -42,8 +42,21 @@ const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
 function EmptyState({ onAddTask }: { onAddTask?: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center px-4 py-12">
-      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-surface-2">
-        <Calendar className="h-6 w-6 text-text-faint" />
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg">
+        <span
+          className="h-6 w-6 block"
+          style={{
+            backgroundColor: "var(--color-text-faint)",
+            WebkitMaskImage: "url(/icons/calendar.svg)",
+            WebkitMaskSize: "contain",
+            WebkitMaskRepeat: "no-repeat",
+            WebkitMaskPosition: "center",
+            maskImage: "url(/icons/calendar.svg)",
+            maskSize: "contain",
+            maskRepeat: "no-repeat",
+            maskPosition: "center",
+          }}
+        />
       </div>
       <h3 className="mb-1.5 text-sm font-medium text-text">Nothing scheduled</h3>
       <p className="mb-4 max-w-[200px] text-center text-xs leading-relaxed text-text-muted">
@@ -289,7 +302,20 @@ export function AgendaView({ tasks = [] }: { tasks?: Task[] }) {
             {unscheduledTasks.length > 0 && (
               <div>
                 <div className="mb-2 flex items-center gap-2">
-                  <Calendar className="h-4 w-4 text-text-faint" />
+                  <span
+                    className="h-4 w-4 block"
+                    style={{
+                      backgroundColor: "var(--color-text-faint)",
+                      WebkitMaskImage: "url(/icons/calendar.svg)",
+                      WebkitMaskSize: "contain",
+                      WebkitMaskRepeat: "no-repeat",
+                      WebkitMaskPosition: "center",
+                      maskImage: "url(/icons/calendar.svg)",
+                      maskSize: "contain",
+                      maskRepeat: "no-repeat",
+                      maskPosition: "center",
+                    }}
+                  />
                   <span className="text-xs font-medium text-text-muted">Unscheduled</span>
                 </div>
                 <div className="space-y-2">

@@ -168,10 +168,25 @@ export function AppSidebar({
     return map
   }, [tasks])
 
+  const completedTasks = useMemo(() => tasks.filter((t) => t.completed), [tasks])
+
   const [taskDropdown, setTaskDropdown] = useState<{
     taskId: string
     anchor: { top: number; left: number; right: number; bottom: number }
   } | null>(null)
+
+  // Slightly delay content mount on expand so width animation leads
+  const [contentVisible, setContentVisible] = useState(!collapsed)
+
+  useEffect(() => {
+    if (!collapsed) {
+      // Wait a short moment so the width has started expanding before we show content
+      const id = window.setTimeout(() => setContentVisible(true), 80)
+      return () => window.clearTimeout(id)
+    }
+    // Hide content immediately when collapsing to avoid flicker
+    setContentVisible(false)
+  }, [collapsed])
 
   const activeDropdownTask = useMemo(
     () => (taskDropdown ? tasks.find((t) => t.id === taskDropdown.taskId) : null),
@@ -304,9 +319,17 @@ export function AppSidebar({
     }),
   }
 
+  // Agenda view uses a simpler fade variant so it plays nicer
+  // with the sidebar width animation on expand/collapse.
+  const agendaVariants = {
+    enter: { opacity: 0, x: 0 },
+    center: { opacity: 1, x: 0 },
+    exit: { opacity: 0, x: 0 },
+  }
+
   const slideTransition = {
     duration: 0.2,
-    ease: [0.2, 0.8, 0.2, 1],
+    ease: [0.2, 0.8, 0.2, 1] as const,
   }
 
   return (
@@ -318,6 +341,7 @@ export function AppSidebar({
     >
       {/* Animated content area */}
       <div className="relative flex-1 overflow-hidden">
+        {contentVisible && (
         <AnimatePresence initial={false} custom={slideDirection} mode="popLayout">
           {sidebarView === "tasks" ? (
             <motion.div
@@ -354,6 +378,35 @@ export function AppSidebar({
                 </div>
               </div>
 
+              {activeTab === "completed" ? (
+                completedTasks.length === 0 ? (
+                  <CompletedEmptyState />
+                ) : (
+                  <div className="flex flex-1 flex-col overflow-y-auto px-1.5 py-3">
+                    <div className="space-y-0.5">
+                      {completedTasks.map((t) => (
+                        <TaskRow
+                          key={t.id}
+                          task={t}
+                          onToggleComplete={() => onToggleComplete?.(t.id)}
+                          onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
+                          isDraggable={t.startMinutes == null || t.endMinutes == null}
+                          onDragStart={() => {
+                            setDraggingTaskId(t.id)
+                            onDragTaskStart?.(t)
+                          }}
+                          onDragEnd={() => {
+                            setDraggingTaskId(null)
+                            onDragTaskEnd?.()
+                          }}
+                          isDragging={draggingTaskId === t.id}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )
+              ) : (
+                <>
               {/* Scheduled groups */}
               <div className="px-1.5 py-3">
                 {scheduledGroups.map((group) => {
@@ -505,24 +558,27 @@ export function AppSidebar({
                   )
                 })()}
 
-                {taskDropdown && activeDropdownTask && (
-                  <TaskActionsDropdown
-                    task={activeDropdownTask}
-                    anchor={taskDropdown.anchor}
-                    categories={categories}
-                    onClose={() => setTaskDropdown(null)}
-                    onToggleComplete={() => onToggleComplete?.(activeDropdownTask.id)}
-                    onUpdateTask={(id, updates) => onUpdateTask?.(id, updates)}
-                    onDeleteTask={(id) => onDeleteTask?.(id)}
-                  />
-                )}
               </div>
+                </>
+              )}
+
+              {taskDropdown && activeDropdownTask && (
+                <TaskActionsDropdown
+                  task={activeDropdownTask}
+                  anchor={taskDropdown.anchor}
+                  categories={categories}
+                  onClose={() => setTaskDropdown(null)}
+                  onToggleComplete={() => onToggleComplete?.(activeDropdownTask.id)}
+                  onUpdateTask={(id, updates) => onUpdateTask?.(id, updates)}
+                  onDeleteTask={(id) => onDeleteTask?.(id)}
+                />
+              )}
             </motion.div>
           ) : (
             <motion.div
               key="agenda"
               custom={slideDirection}
-              variants={slideVariants}
+              variants={agendaVariants}
               initial="enter"
               animate="center"
               exit="exit"
@@ -533,6 +589,7 @@ export function AppSidebar({
             </motion.div>
           )}
         </AnimatePresence>
+        )}
       </div>
 
 
@@ -665,7 +722,7 @@ function AddCategoryPopover({
   )
 }
 
-function CategoryActionsDropdown({
+export function CategoryActionsDropdown({
   anchor,
   currentColor,
   onClose,
@@ -1076,16 +1133,6 @@ function TaskActionsDropdown({
 
       <div className="mx-2 my-1 h-px bg-border/20" />
 
-      <button
-        className={rowClass}
-        onMouseEnter={() => setOpenSub(null)}
-        onClick={() => {
-          closeWithAnimation()
-        }}
-      >
-        <Pencil className="h-3.5 w-3.5 text-text-muted" />
-        <span>Edit</span>
-      </button>
 
       <button
         className="flex w-full items-center gap-2.5 px-3 py-1.5 text-xs text-red-400 transition-colors duration-150 hover:bg-red-500/10"
@@ -1202,6 +1249,37 @@ function TaskActionsDropdown({
 const DRAG_IMAGE_TRANSPARENT =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
 
+function CompletedEmptyState() {
+  return (
+    <div className="px-4 pt-12">
+      <div className="flex flex-col items-center text-center">
+        <div
+          className="mb-4 h-6 w-6"
+          style={{
+            backgroundColor: "var(--color-text-muted)",
+            WebkitMaskImage: "url(/icons/taskicon.svg)",
+            WebkitMaskSize: "contain",
+            WebkitMaskRepeat: "no-repeat",
+            WebkitMaskPosition: "center",
+            maskImage: "url(/icons/taskicon.svg)",
+            maskSize: "contain",
+            maskRepeat: "no-repeat",
+            maskPosition: "center",
+          }}
+          aria-hidden="true"
+        />
+
+        <p className="mb-1.5 text-sm font-medium text-text">No completed tasks yet</p>
+        <p className="max-w-[220px] text-xs leading-relaxed text-text-muted">
+          Completed tasks will appear here
+          <br />
+          for 24 hours
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function TaskRow({
   task,
   onToggleComplete,
@@ -1264,10 +1342,12 @@ function TaskRow({
         }}
         className={cn(
           "mt-0.5 flex h-3 w-3 shrink-0 items-center justify-center rounded-[3px] border-[1.5px] transition-all duration-200",
-          task.completed ? "border-text-faint/40 bg-text-faint/20" : "border-text-faint/40 hover:border-text-muted"
+          task.completed
+            ? "border-transparent bg-app-accent"
+            : "border-text-faint/40 hover:border-text-muted"
         )}
       >
-        {task.completed && <Check className="h-2.5 w-2.5 text-text-faint" />}
+        {task.completed && <Check className="h-2.5 w-2.5 text-app-accent-foreground" />}
       </button>
 
       <div className="flex flex-1 flex-col gap-1 min-w-0">

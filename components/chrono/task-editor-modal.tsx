@@ -227,7 +227,7 @@ export function TaskEditorPanel({
 
   // Compute schedule display label and icon
   const isPickedDate = task.schedule === "picked" && task.scheduledDate
-  const scheduleDisplayLabel = isPickedDate
+  const scheduleDisplayLabel = isPickedDate && task.scheduledDate
     ? format(new Date(task.scheduledDate), "MMM d")
     : selectedSchedule.label
   const scheduleIconSrc = isPickedDate
@@ -509,8 +509,8 @@ export function TaskEditorPanel({
                         </svg>
                       )}
                     </button>
-                    {ALL_TIME_SLOTS.filter((slot) => slot > task.startTimeMinutes).map((slot) => {
-                      const diff = slot - task.startTimeMinutes!
+                    {ALL_TIME_SLOTS.filter((slot) => task.startTimeMinutes != null && slot > task.startTimeMinutes).map((slot) => {
+                      const diff = slot - (task.startTimeMinutes ?? 0)
                       return (
                         <button
                           key={slot}
