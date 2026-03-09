@@ -33,6 +33,7 @@ const INITIAL_CANVAS_PROJECTS: CanvasProject[] = [
   {
     id: "p1",
     name: "Ambient UI",
+    icon: "sparkles",
     color: "#f97316",
     items: [
       {
@@ -78,6 +79,7 @@ const INITIAL_CANVAS_PROJECTS: CanvasProject[] = [
   {
     id: "p2",
     name: "Research notes",
+    icon: "fileText",
     color: "#3b82f6",
     items: [
       {
@@ -401,6 +403,7 @@ export default function ChronoApp() {
         {
           id,
           name: `New project ${prev.length + 1}`,
+          icon: "folder",
           color: "#94a3b8",
           items: [],
         },

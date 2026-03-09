@@ -29,6 +29,7 @@ export type CanvasItem =
 export interface CanvasProject {
   id: string
   name: string
+  icon?: string
   color?: string
   items: CanvasItem[]
 }
