@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useMemo, useEffect } from "react"
 import { startOfWeek, addDays, addWeeks, startOfDay, format } from "date-fns"
 import { AppSidebar } from "@/components/chrono/sidebar"
 import { TopBar, type AppMode } from "@/components/chrono/top-bar"
@@ -95,6 +95,14 @@ const INITIAL_CANVAS_PROJECTS: CanvasProject[] = [
   },
 ]
 
+const STORAGE_KEYS = {
+  tasks: "cadence_tasks",
+  canvasProjects: "cadence_canvas_projects",
+  activeProjectId: "cadence_active_project_id",
+  appMode: "cadence_app_mode",
+  sidebarView: "cadence_sidebar_view",
+} as const
+
 // Chrono App
 export default function ChronoApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -105,6 +113,7 @@ export default function ChronoApp() {
   const [draggingSidebarTask, setDraggingSidebarTask] = useState<Task | null>(null)
   const [accountPanelOpen, setAccountPanelOpen] = useState(false)
   const [appMode, setAppMode] = useState<AppMode>("schedule")
+  const [sidebarView, setSidebarView] = useState<"tasks" | "agenda">("tasks")
   const [canvasProjects, setCanvasProjects] = useState<CanvasProject[]>(INITIAL_CANVAS_PROJECTS)
   const [activeProjectId, setActiveProjectId] = useState<string | null>(
     INITIAL_CANVAS_PROJECTS.length ? INITIAL_CANVAS_PROJECTS[0].id : null
@@ -118,6 +127,68 @@ export default function ChronoApp() {
   } | null>(null)
 
   const weekStart = useMemo(() => startOfWeek(anchorDate, { weekStartsOn: 0 }), [anchorDate])
+
+  // ─── Hydrate state from localStorage on first mount ─────────────────────
+  useEffect(() => {
+    if (typeof window === "undefined") return
+
+    try {
+      const storedTasks = window.localStorage.getItem(STORAGE_KEYS.tasks)
+      if (storedTasks) {
+        const parsed = JSON.parse(storedTasks)
+        if (Array.isArray(parsed)) {
+          setTasks(parsed as Task[])
+        }
+      }
+    } catch {
+      // ignore malformed tasks
+    }
+
+    let hydratedProjects: CanvasProject[] | null = null
+    try {
+      const storedProjects = window.localStorage.getItem(STORAGE_KEYS.canvasProjects)
+      if (storedProjects) {
+        const parsed = JSON.parse(storedProjects)
+        if (Array.isArray(parsed)) {
+          hydratedProjects = parsed as CanvasProject[]
+          setCanvasProjects(hydratedProjects)
+        }
+      }
+    } catch {
+      // ignore malformed projects
+    }
+
+    try {
+      const storedMode = window.localStorage.getItem(STORAGE_KEYS.appMode)
+      if (storedMode === "schedule" || storedMode === "canvas") {
+        setAppMode(storedMode)
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const storedSidebarView = window.localStorage.getItem(STORAGE_KEYS.sidebarView)
+      if (storedSidebarView === "tasks" || storedSidebarView === "agenda") {
+        setSidebarView(storedSidebarView)
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const storedActiveId = window.localStorage.getItem(STORAGE_KEYS.activeProjectId)
+      if (storedActiveId) {
+        const projectsSource = hydratedProjects ?? INITIAL_CANVAS_PROJECTS
+        const exists = projectsSource.some((p) => p.id === storedActiveId)
+        if (exists) {
+          setActiveProjectId(storedActiveId)
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
 
   const handleGoToDate = useCallback((date: Date) => {
     setAnchorDate(startOfDay(date))
@@ -155,6 +226,55 @@ export default function ChronoApp() {
   const handlePrevWeek = useCallback(() => {
     setAnchorDate((prev) => addWeeks(prev, -1))
   }, [])
+
+  const handleSidebarModeClick = useCallback((view: "tasks" | "agenda" | "canvas") => {
+    if (view === "canvas") {
+      setAppMode("canvas")
+      return
+    }
+    setAppMode("schedule")
+    setSidebarView(view)
+  }, [])
+
+  // ─── Persist state to localStorage ───────────────────────────────────────
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.tasks, JSON.stringify(tasks))
+    } catch {
+      // ignore write errors
+    }
+  }, [tasks])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.canvasProjects, JSON.stringify(canvasProjects))
+    } catch {
+      // ignore write errors
+    }
+  }, [canvasProjects])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    try {
+      if (activeProjectId) {
+        window.localStorage.setItem(STORAGE_KEYS.activeProjectId, activeProjectId)
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeProjectId])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.appMode, appMode)
+      window.localStorage.setItem(STORAGE_KEYS.sidebarView, sidebarView)
+    } catch {
+      // ignore
+    }
+  }, [appMode, sidebarView])
 
   const handleNextWeek = useCallback(() => {
     setAnchorDate((prev) => addWeeks(prev, 1))
@@ -511,8 +631,6 @@ export default function ChronoApp() {
       <TopBar
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-        appMode={appMode}
-        onModeChange={setAppMode}
         onAvatarClick={() => setAccountPanelOpen(true)}
       />
 
@@ -533,6 +651,9 @@ export default function ChronoApp() {
               onQuickAddTask={handleSidebarQuickAdd}
               onDragTaskStart={setDraggingSidebarTask}
               onDragTaskEnd={() => setDraggingSidebarTask(null)}
+              appMode={appMode}
+              sidebarView={sidebarView}
+              onSidebarModeClick={handleSidebarModeClick}
             />
 
             {/* Calendar area */}
@@ -573,6 +694,9 @@ export default function ChronoApp() {
               onAddProject={handleAddProject}
               onUpdateProject={handleCanvasProjectUpdate}
               onDeleteProject={handleCanvasProjectDelete}
+              appMode={appMode}
+              sidebarView={sidebarView}
+              onSidebarModeClick={handleSidebarModeClick}
             />
             <div className="relative flex flex-1 flex-col min-w-0 overflow-hidden rounded-tl-lg bg-calendar-bg">
               <CanvasBoard

@@ -13,14 +13,10 @@ export function TopBar({
   sidebarCollapsed,
   onToggleSidebar,
   onAvatarClick,
-  appMode = "schedule",
-  onModeChange,
 }: {
   sidebarCollapsed: boolean
   onToggleSidebar: () => void
   onAvatarClick?: () => void
-  appMode?: AppMode
-  onModeChange?: (mode: AppMode) => void
 }) {
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
@@ -64,28 +60,6 @@ export function TopBar({
           Week
           <ChevronDown className="h-3 w-3 text-text-muted" />
         </button>
-        <div className="hidden sm:flex rounded bg-surface-2/90 p-0.5">
-          <button
-            type="button"
-            onClick={() => onModeChange?.("schedule")}
-            className={cn(
-              "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
-              appMode === "schedule" ? "bg-surface text-text shadow-sm" : "text-text-muted hover:text-text"
-            )}
-          >
-            Schedule
-          </button>
-          <button
-            type="button"
-            onClick={() => onModeChange?.("canvas")}
-            className={cn(
-              "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
-              appMode === "canvas" ? "bg-surface text-text shadow-sm" : "text-text-muted hover:text-text"
-            )}
-          >
-            Canvas
-          </button>
-        </div>
         <button
           type="button"
           onClick={onAvatarClick}

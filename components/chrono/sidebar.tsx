@@ -66,6 +66,9 @@ export function AppSidebar({
   onQuickAddTask,
   onDragTaskStart,
   onDragTaskEnd,
+  appMode,
+  sidebarView,
+  onSidebarModeClick,
 }: {
   collapsed: boolean
   onToggleSidebar: () => void
@@ -76,8 +79,10 @@ export function AppSidebar({
   onQuickAddTask?: (preset: { tag?: string; date?: Date; schedule?: string }) => void
   onDragTaskStart?: (task: Task) => void
   onDragTaskEnd?: () => void
+  appMode: import("./top-bar").AppMode
+  sidebarView: "tasks" | "agenda"
+  onSidebarModeClick: (view: "tasks" | "agenda" | "canvas") => void
 }) {
-  const [sidebarView, setSidebarView] = useState<"tasks" | "agenda">("tasks")
   const [slideDirection, setSlideDirection] = useState<1 | -1>(1)
   const [activeTab, setActiveTab] = useState<"all" | "completed">("all")
   const [categoriesOpen, setCategoriesOpen] = useState(true)
@@ -261,14 +266,14 @@ export function AppSidebar({
   const switchToAgenda = useCallback(() => {
     if (sidebarView === "agenda") return
     setSlideDirection(1) // tasks slides left, agenda slides in from right
-    setSidebarView("agenda")
-  }, [sidebarView])
+    onSidebarModeClick("agenda")
+  }, [sidebarView, onSidebarModeClick])
 
   const switchToTasks = useCallback(() => {
     if (sidebarView === "tasks") return
     setSlideDirection(-1) // agenda slides right, tasks slides in from left
-    setSidebarView("tasks")
-  }, [sidebarView])
+    onSidebarModeClick("tasks")
+  }, [sidebarView, onSidebarModeClick])
 
   // Keyboard shortcuts for T, A, and Shift+S
   useEffect(() => {
@@ -610,6 +615,14 @@ export function AppSidebar({
             shortcut="A"
             isActive={sidebarView === "agenda"}
             onClick={switchToAgenda}
+            tooltipPosition="above"
+          />
+          <IconTooltipButton
+            iconUrl="/icons/canvas.svg"
+            label="Canvas"
+            shortcut="C"
+            isActive={appMode === "canvas"}
+            onClick={() => onSidebarModeClick("canvas")}
             tooltipPosition="above"
           />
         </div>

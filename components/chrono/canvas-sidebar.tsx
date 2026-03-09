@@ -6,10 +6,11 @@ import {
   BookOpen,
   FileText,
   Folder,
+  FolderPlus,
   Image as ImageIcon,
   Layout,
   MoreHorizontal,
-  Plus,
+  Search,
   Sparkles,
   Star,
   StickyNote,
@@ -19,6 +20,7 @@ import {
 import type { LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { CanvasProject } from "./canvas-board"
+import { IconTooltipButton } from "./icon-tooltip-button"
 
 interface CanvasSidebarProps {
   collapsed: boolean
@@ -29,6 +31,9 @@ interface CanvasSidebarProps {
   onAddProject: () => void
   onUpdateProject: (projectId: string, updates: Partial<CanvasProject>) => void
   onDeleteProject: (projectId: string) => void
+  appMode: import("./top-bar").AppMode
+  sidebarView: "tasks" | "agenda"
+  onSidebarModeClick: (view: "tasks" | "agenda" | "canvas") => void
 }
 
 export function CanvasSidebar({
@@ -39,6 +44,9 @@ export function CanvasSidebar({
   onAddProject,
   onUpdateProject,
   onDeleteProject,
+  appMode,
+  sidebarView,
+  onSidebarModeClick,
 }: CanvasSidebarProps) {
   const [contentVisible, setContentVisible] = useState(!collapsed)
   const [actionsDropdown, setActionsDropdown] = useState<{
@@ -48,6 +56,7 @@ export function CanvasSidebar({
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState("")
   const renameInputRef = useRef<HTMLInputElement | null>(null)
+  const [search, setSearch] = useState("")
 
   useEffect(() => {
     if (!collapsed) {
@@ -85,15 +94,23 @@ export function CanvasSidebar({
       <div className="relative flex-1 overflow-hidden">
         {contentVisible && (
           <div className="flex h-full flex-col">
-            <div className="px-3 pt-4 pb-2">
-              <p className="text-[12px] font-semibold text-text-faint">Recent</p>
+            <div className="flex items-center gap-2 px-3 pt-0 pb-3">
+              <div className="flex h-8 flex-1 items-center gap-2 rounded-md bg-surface-2/60 px-2.5 text-sm text-text transition-colors hover:bg-surface">
+                <Search className="h-4 w-4 text-text-muted" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search"
+                  className="w-full bg-transparent text-sm text-text outline-none placeholder:text-text-muted"
+                />
+              </div>
               <button
                 type="button"
                 onClick={onAddProject}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-surface-2/80 px-2.5 py-1 text-[11px] font-medium text-text-muted transition-colors hover:bg-surface hover:text-text"
+                className="flex h-8 w-8 items-center justify-center rounded-md bg-surface-2/60 text-text-muted transition-colors hover:bg-surface hover:text-text"
               >
-                <Plus className="h-3.5 w-3.5" />
-                <span>New project</span>
+                <FolderPlus className="h-4 w-4" />
               </button>
             </div>
 
@@ -202,6 +219,36 @@ export function CanvasSidebar({
                 />
               )
             })()}
+
+            {/* Bottom toggle icons – mirror main sidebar */}
+            <div className="flex justify-start px-3 pb-3 pt-2">
+              <div className="relative inline-flex items-center rounded-lg bg-surface-2/80 px-2 py-2">
+                <IconTooltipButton
+                  iconUrl="/icons/taskicon.svg"
+                  label="Tasks"
+                  shortcut="T"
+                  isActive={appMode === "schedule" && sidebarView === "tasks"}
+                  onClick={() => onSidebarModeClick("tasks")}
+                  tooltipPosition="above"
+                />
+                <IconTooltipButton
+                  iconUrl="/icons/calendar.svg"
+                  label="Agenda"
+                  shortcut="A"
+                  isActive={appMode === "schedule" && sidebarView === "agenda"}
+                  onClick={() => onSidebarModeClick("agenda")}
+                  tooltipPosition="above"
+                />
+                <IconTooltipButton
+                  iconUrl="/icons/canvas.svg"
+                  label="Canvas"
+                  shortcut="C"
+                  isActive={appMode === "canvas"}
+                  onClick={() => onSidebarModeClick("canvas")}
+                  tooltipPosition="above"
+                />
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -305,7 +352,7 @@ function ProjectActionsDropdown({
                 className={cn(
                   "flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-text-muted transition-colors",
                   isActive
-                    ? "border-app-accent/60 bg-app-accent/10 text-app-accent"
+                    ? "border-text-faint/20 bg-text/faint/10 text-text"
                     : "hover:border-border/60 hover:bg-surface-2 hover:text-text"
                 )}
               >
