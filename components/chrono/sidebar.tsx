@@ -1,24 +1,16 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo, type ComponentType, type ReactNode, type DragEvent } from "react"
 import { createPortal } from "react-dom"
 import { format, isToday as isTodayFn, isTomorrow as isTomorrowFn, isBefore, startOfDay, addDays } from "date-fns"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
-import {
-  ChevronRight,
-  Plus,
-  Pencil,
-  Trash2,
-  Check,
-  MoreHorizontal,
-  Repeat,
-  Tag,
-  Calendar,
-} from "lucide-react"
+import { ChevronRight, Plus, Pencil, Trash2, Check, MoreHorizontal, Repeat, Tag, Calendar } from "lucide-react"
 import type { Task } from "@/app/page"
+import type { CanvasProject } from "./canvas-board"
 import { AgendaView } from "./agenda-view"
 import { IconTooltipButton } from "./icon-tooltip-button"
+import { ProjectActionsDropdown } from "./canvas-sidebar"
 
 const scheduledGroups = [
   { label: "Unscheduled", color: "#6b7280", icon: "calendar.svg" },
@@ -27,15 +19,6 @@ const scheduledGroups = [
   { label: "Due Soon", color: "#a855f7", icon: "due-soon.svg" },
   { label: "Overdue", color: "#ef4444", icon: "overdue.svg" },
 ]
-
-const INITIAL_CATEGORIES = [
-  { label: "Reading", color: "#ef4444" },
-  { label: "Building", color: "#3b82f6" },
-  { label: "Portfolio", color: "#a855f7" },
-  { label: "Inspiration", color: "#22c55e" },
-]
-
-const PRESET_COLORS = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#3b82f6", "#a855f7", "#ec4899", "#6b7280"]
 
 const EXTENDED_COLORS = [
   "#ef4444",
@@ -60,6 +43,7 @@ export function AppSidebar({
   collapsed,
   onToggleSidebar,
   tasks = [],
+  projects = [],
   onToggleComplete,
   onUpdateTask,
   onDeleteTask,
@@ -69,26 +53,32 @@ export function AppSidebar({
   appMode,
   sidebarView,
   onSidebarModeClick,
+  onAddProject,
+  onUpdateProject,
+  onDeleteProject,
 }: {
   collapsed: boolean
   onToggleSidebar: () => void
   tasks?: Task[]
+  projects?: CanvasProject[]
   onToggleComplete?: (id: string) => void
   onUpdateTask?: (id: string, updates: Partial<Task>) => void
   onDeleteTask?: (id: string) => void
-  onQuickAddTask?: (preset: { tag?: string; date?: Date; schedule?: string }) => void
+  onQuickAddTask?: (preset: { tag?: string; date?: Date; schedule?: string; projectId?: string }) => void
   onDragTaskStart?: (task: Task) => void
   onDragTaskEnd?: () => void
   appMode: import("./top-bar").AppMode
   sidebarView: "tasks" | "agenda"
   onSidebarModeClick: (view: "tasks" | "agenda" | "canvas") => void
+  onAddProject?: (name: string, icon: string) => void
+  onUpdateProject?: (projectId: string, updates: Partial<CanvasProject>) => void
+  onDeleteProject?: (projectId: string) => void
 }) {
   const [slideDirection, setSlideDirection] = useState<1 | -1>(1)
   const [activeTab, setActiveTab] = useState<"all" | "completed">("all")
-  const [categoriesOpen, setCategoriesOpen] = useState(true)
-  const [categories, setCategories] = useState(INITIAL_CATEGORIES)
-  const categoriesRef = useRef<HTMLDivElement>(null)
-  const [categoriesHeight, setCategoriesHeight] = useState<number | undefined>(undefined)
+  const [projectsOpen, setProjectsOpen] = useState(true)
+  const projectsRef = useRef<HTMLDivElement>(null)
+  const [projectsHeight, setProjectsHeight] = useState<number | undefined>(undefined)
 
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
@@ -96,10 +86,19 @@ export function AppSidebar({
     setExpandedGroups((prev) => ({ ...prev, [key]: !prev[key] }))
   }, [])
 
-  const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({})
-  const toggleCategory = useCallback((key: string) => {
-    setExpandedCategories((prev) => ({ ...prev, [key]: !prev[key] }))
+  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({})
+  const toggleProject = useCallback((key: string) => {
+    setExpandedProjects((prev) => ({ ...prev, [key]: !prev[key] }))
   }, [])
+
+  const [addProjectOpen, setAddProjectOpen] = useState(false)
+  const [addProjectPos, setAddProjectPos] = useState<{ top: number; left: number } | null>(null)
+  const addProjectBtnRef = useRef<HTMLButtonElement>(null)
+
+  const [projectActionsDropdown, setProjectActionsDropdown] = useState<{
+    projectId: string
+    anchor: { top: number; left: number; right: number; bottom: number }
+  } | null>(null)
 
   const buckets = useMemo(() => {
     const now = new Date()
@@ -161,17 +160,22 @@ export function AppSidebar({
     "Due Soon": buckets.dueSoon,
   }
 
-  const categoryTaskMap = useMemo(() => {
+  const projectTaskMap = useMemo(() => {
     const map: Record<string, Task[]> = {}
     for (const t of tasks) {
       if (t.completed) continue
-      if (t.tag) {
-        if (!map[t.tag]) map[t.tag] = []
-        map[t.tag].push(t)
-      }
+      const pid = (t.projectId ?? "general").trim() || "general"
+      if (!map[pid]) map[pid] = []
+      map[pid].push(t)
     }
     return map
   }, [tasks])
+
+  const projectById = useMemo(() => {
+    const map = new Map<string, CanvasProject>()
+    for (const p of projects) map.set(p.id, p)
+    return map
+  }, [projects])
 
   const completedTasks = useMemo(() => tasks.filter((t) => t.completed), [tasks])
 
@@ -198,70 +202,11 @@ export function AppSidebar({
     [taskDropdown, tasks]
   )
 
-  const [actionsDropdown, setActionsDropdown] = useState<{
-    label: string
-    anchor: { top: number; left: number; right: number; bottom: number }
-  } | null>(null)
-
-  const [renamingCategory, setRenamingCategory] = useState<string | null>(null)
-
-  const handleMoreClick = useCallback(
-    (label: string, anchor: { top: number; left: number; right: number; bottom: number }) => {
-      setActionsDropdown({ label, anchor })
-    },
-    []
-  )
-
-  const handleColorChangeImmediate = useCallback((label: string, newColor: string) => {
-    setCategories((prev) => prev.map((c) => (c.label === label ? { ...c, color: newColor } : c)))
-  }, [])
-
-  const handleRenameStart = useCallback((label: string) => {
-    setActionsDropdown(null)
-    requestAnimationFrame(() => setRenamingCategory(label))
-  }, [])
-
-  const handleRenameCommit = useCallback((oldLabel: string, newLabel: string) => {
-    const trimmed = newLabel.trim()
-    if (trimmed && trimmed !== oldLabel) {
-      setCategories((prev) => prev.map((c) => (c.label === oldLabel ? { ...c, label: trimmed } : c)))
-    }
-    setRenamingCategory(null)
-  }, [])
-
-  const handleDeleteCategory = useCallback((label: string) => {
-    setActionsDropdown(null)
-    setCategories((prev) => prev.filter((c) => c.label !== label))
-    requestAnimationFrame(() => {
-      if (categoriesRef.current) setCategoriesHeight(categoriesRef.current.scrollHeight)
-    })
-  }, [])
-
-  const [addOpen, setAddOpen] = useState(false)
-  const [addPos, setAddPos] = useState<{ top: number; left: number } | null>(null)
-  const addBtnRef = useRef<HTMLButtonElement>(null)
-
   useEffect(() => {
     requestAnimationFrame(() => {
-      if (categoriesRef.current) setCategoriesHeight(categoriesRef.current.scrollHeight)
+      if (projectsRef.current) setProjectsHeight(projectsRef.current.scrollHeight)
     })
-  }, [categories, expandedCategories, categoryTaskMap])
-
-  const openAddPopover = useCallback(() => {
-    if (addBtnRef.current) {
-      const rect = addBtnRef.current.getBoundingClientRect()
-      setAddPos({ top: rect.bottom + 4, left: rect.left })
-    }
-    setAddOpen(true)
-  }, [])
-
-  const handleCreateCategory = useCallback((name: string, color: string) => {
-    setCategories((prev) => [...prev, { label: name, color }])
-    setAddOpen(false)
-    requestAnimationFrame(() => {
-      if (categoriesRef.current) setCategoriesHeight(categoriesRef.current.scrollHeight)
-    })
-  }, [])
+  }, [projects, expandedProjects, projectTaskMap])
 
   const switchToAgenda = useCallback(() => {
     if (sidebarView === "agenda") return
@@ -459,111 +404,132 @@ export function AppSidebar({
               </div>
 
 
-              {/* Categories section */}
+              {/* Projects section */}
               <div className="flex-1 overflow-y-auto px-1.5 py-3">
-                <div className="group/cat-header mb-0.5 flex w-full items-center px-2">
+                <div className="group/projects mb-0.5 flex w-full items-center px-2">
                   <button
-                    onClick={() => setCategoriesOpen(!categoriesOpen)}
+                    onClick={() => setProjectsOpen(!projectsOpen)}
                     className="flex flex-1 items-center gap-1.5 text-[13px] font-medium text-text/60 transition-colors duration-300 ease-in-out hover:text-text/90"
                   >
-                    <ChevronRight className={cn("h-2.5 w-2.5 transition-transform duration-200", categoriesOpen && "rotate-90")} />
-                    Categories
+                    <ChevronRight className={cn("h-2.5 w-2.5 transition-transform duration-200", projectsOpen && "rotate-90")} />
+                    Projects
                   </button>
                   <button
-                    ref={addBtnRef}
+                    ref={addProjectBtnRef}
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation()
-                      e.preventDefault()
-                      openAddPopover()
+                      if (addProjectBtnRef.current) {
+                        const rect = addProjectBtnRef.current.getBoundingClientRect()
+                        setAddProjectPos({ top: rect.bottom + 4, left: rect.left })
+                      }
+                      setAddProjectOpen(true)
                     }}
-                    className="flex h-6 w-6 items-center justify-center rounded text-text-muted opacity-0 transition-all duration-300 ease-in-out hover:bg-surface-2 hover:text-text group-hover/cat-header:opacity-100"
+                    className="flex h-6 w-6 items-center justify-center rounded text-text-muted opacity-0 transition-all duration-300 ease-in-out hover:bg-surface-2 hover:text-text group-hover/projects:opacity-100"
                   >
                     <Plus className="h-3.5 w-3.5" />
                   </button>
                 </div>
 
                 <div
-                  ref={categoriesRef}
+                  ref={projectsRef}
                   className="transition-all duration-200"
                   style={{
-                    maxHeight: categoriesOpen ? (categoriesHeight ?? 2000) : 0,
-                    opacity: categoriesOpen ? 1 : 0,
-                    overflow: categoriesOpen ? "visible" : "hidden",
+                    maxHeight: projectsOpen ? (projectsHeight ?? 2000) : 0,
+                    opacity: projectsOpen ? 1 : 0,
+                    overflow: projectsOpen ? "visible" : "hidden",
                   }}
                 >
-                  {categories.map((group) => {
-                    const catTasks = categoryTaskMap[group.label] ?? []
-                    const catCount = catTasks.length
-                    const isCatExpanded = expandedCategories[group.label] ?? false
-                    return (
-                      <div key={group.label}>
-                        <SidebarItem
-                          label={group.label}
-                          color={group.color}
-                          count={catCount > 0 ? catCount : undefined}
-                          hasChevron
-                          isExpanded={isCatExpanded}
-                          onToggleExpand={catCount > 0 ? () => toggleCategory(group.label) : undefined}
-                          showPlus
-                          onPlusClick={() => onQuickAddTask?.({ tag: group.label })}
-                          showMore
-                          isRenaming={renamingCategory === group.label}
-                          onRenameCommit={(newLabel) => handleRenameCommit(group.label, newLabel)}
-                          onRenameCancel={() => setRenamingCategory(null)}
-                          onMoreClick={(anchor) => handleMoreClick(group.label, anchor)}
-                        />
-                        {isCatExpanded && catCount > 0 && (
-                          <div className="ml-5 mt-0.5 mb-1">
-                            {catTasks.map((t) => (
-                              <TaskRow
-                                key={t.id}
-                                task={t}
-                                onToggleComplete={() => onToggleComplete?.(t.id)}
-                                onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
-                                isDraggable={t.startMinutes == null || t.endMinutes == null}
-                                onDragStart={() => {
-                                  setDraggingTaskId(t.id)
-                                  onDragTaskStart?.(t)
-                                }}
-                                onDragEnd={() => {
-                                  setDraggingTaskId(null)
-                                  onDragTaskEnd?.()
-                                }}
-                                isDragging={draggingTaskId === t.id}
-                              />
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
+                  <div>
+                    {projects.map((project) => {
+                      const projectTasks = projectTaskMap[project.id] ?? []
+                      const count = projectTasks.length
+                      const isExpanded = expandedProjects[project.id] ?? false
+                      return (
+                        <div key={project.id}>
+                          <ProjectItem
+                            label={project.name}
+                          color={project.color}
+                            count={count > 0 ? count : undefined}
+                            hasChevron
+                            isExpanded={isExpanded}
+                            onToggleExpand={count > 0 ? () => toggleProject(project.id) : undefined}
+                          onPlusClick={() => {
+                            onQuickAddTask?.({ projectId: project.id })
+                          }}
+                          onMoreClick={(anchor) => {
+                            setProjectActionsDropdown({ projectId: project.id, anchor })
+                          }}
+                          />
+                          {isExpanded && count > 0 && (
+                            <div className="ml-5 mt-0.5 mb-1">
+                              {projectTasks.map((t) => (
+                                <TaskRow
+                                  key={t.id}
+                                  task={t}
+                                  onToggleComplete={() => onToggleComplete?.(t.id)}
+                                  onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
+                                  isDraggable={t.startMinutes == null || t.endMinutes == null}
+                                  onDragStart={() => {
+                                    setDraggingTaskId(t.id)
+                                    onDragTaskStart?.(t)
+                                  }}
+                                  onDragEnd={() => {
+                                    setDraggingTaskId(null)
+                                    onDragTaskEnd?.()
+                                  }}
+                                  isDragging={draggingTaskId === t.id}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
-
-                {addOpen && addPos && (
-                  <AddCategoryPopover
-                    pos={addPos}
-                    existingNames={categories.map((c) => c.label)}
-                    onClose={() => setAddOpen(false)}
-                    onCreate={handleCreateCategory}
-                  />
-                )}
-
-                {actionsDropdown && (() => {
-                  const cat = categories.find((c) => c.label === actionsDropdown.label)
-                  if (!cat) return null
-                  return (
-                    <CategoryActionsDropdown
-                      anchor={actionsDropdown.anchor}
-                      currentColor={cat.color}
-                      onClose={() => setActionsDropdown(null)}
-                      onColorChange={(newColor) => handleColorChangeImmediate(actionsDropdown.label, newColor)}
-                      onRename={() => handleRenameStart(actionsDropdown.label)}
-                      onDelete={() => handleDeleteCategory(actionsDropdown.label)}
-                    />
-                  )
-                })()}
-
               </div>
+
+              {addProjectOpen && addProjectPos && onAddProject && (
+                <AddProjectPopover
+                  pos={addProjectPos}
+                  existingNames={projects.map((p) => p.name)}
+                  onClose={() => setAddProjectOpen(false)}
+                  onCreate={(name, icon) => {
+                    onAddProject(name, icon)
+                    setAddProjectOpen(false)
+                  }}
+                />
+              )}
+
+              {projectActionsDropdown && projects.length > 0 && (() => {
+                const project = projects.find((p) => p.id === projectActionsDropdown.projectId)
+                if (!project) return null
+                const count = projectTaskMap[project.id]?.length ?? 0
+                return (
+                  <ProjectActionsDropdown
+                    anchor={projectActionsDropdown.anchor}
+                    currentColor={project.color}
+                    deleteDisabled={count > 0}
+                    onClose={() => setProjectActionsDropdown(null)}
+                    onColorChange={(color) => {
+                      onUpdateProject?.(project.id, { color })
+                    }}
+                    onRename={() => {
+                      const next = window.prompt("Rename project", project.name)
+                      if (!next) return
+                      const trimmed = next.trim()
+                      if (!trimmed || trimmed === project.name) return
+                      onUpdateProject?.(project.id, { name: trimmed })
+                      setProjectActionsDropdown(null)
+                    }}
+                    onDelete={() => {
+                      onDeleteProject?.(project.id)
+                      setProjectActionsDropdown(null)
+                    }}
+                  />
+                )
+              })()}
                 </>
               )}
 
@@ -571,7 +537,7 @@ export function AppSidebar({
                 <TaskActionsDropdown
                   task={activeDropdownTask}
                   anchor={taskDropdown.anchor}
-                  categories={categories}
+                  projects={projects}
                   onClose={() => setTaskDropdown(null)}
                   onToggleComplete={() => onToggleComplete?.(activeDropdownTask.id)}
                   onUpdateTask={(id, updates) => onUpdateTask?.(id, updates)}
@@ -590,7 +556,7 @@ export function AppSidebar({
               transition={slideTransition}
               className="absolute inset-0 overflow-hidden"
             >
-              <AgendaView tasks={tasks} />
+              <AgendaView tasks={tasks} projects={projects} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -827,9 +793,9 @@ function ColorSwatchGrid({ value, onChange }: { value: string; onChange: (color:
   const row1 = EXTENDED_COLORS.slice(0, 8)
   const row2 = EXTENDED_COLORS.slice(8, 16)
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1">
       {[row1, row2].map((row, ri) => (
-        <div key={ri} className="flex items-center gap-1.5">
+        <div key={ri} className="flex items-center gap-1">
           {row.map((c) => {
             const isSelected = c === value
             return (
@@ -837,12 +803,19 @@ function ColorSwatchGrid({ value, onChange }: { value: string; onChange: (color:
                 key={c}
                 onClick={() => onChange(c)}
                 className={cn(
-                  "relative flex h-4 w-4 items-center justify-center rounded-sm transform-gpu transition-transform duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:scale-[1.1]",
-                  isSelected ? "" : "hover:ring-1 hover:ring-white/10 hover:ring-offset-1 hover:ring-offset-background"
+                  // Swatch: smaller, squarer, rounded-[4px], compact, subtle hover scale, smooth transition
+                  "relative flex h-4 w-4 items-center justify-center rounded-[4px] transform-gpu transition-transform duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:scale-[1.08]",
+                  isSelected
+                    ? "ring-2 ring-white/90 ring-offset-2 ring-offset-background"
+                    : "hover:ring-1 hover:ring-white/10 hover:ring-offset-1 hover:ring-offset-background"
                 )}
                 style={{ backgroundColor: c }}
               >
-                {isSelected && <Check className="h-3 w-3 text-white drop-shadow-sm" />}
+                {isSelected && (
+                  <span className="absolute inset-0 flex items-center justify-center">
+                    <Check className="h-3 w-3 text-white drop-shadow-sm pointer-events-none" />
+                  </span>
+                )}
               </button>
             )
           })}
@@ -971,7 +944,7 @@ function SubmenuRow({
 function TaskActionsDropdown({
   task,
   anchor,
-  categories,
+  projects,
   onClose,
   onToggleComplete,
   onUpdateTask,
@@ -979,7 +952,7 @@ function TaskActionsDropdown({
 }: {
   task: Task
   anchor: { top: number; left: number; right: number; bottom: number }
-  categories: { label: string; color: string }[]
+  projects: CanvasProject[]
   onClose: () => void
   onToggleComplete: () => void
   onUpdateTask: (id: string, updates: Partial<Task>) => void
@@ -990,7 +963,7 @@ function TaskActionsDropdown({
   const [visible, setVisible] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
   const submenuRef = useRef<HTMLDivElement>(null)
-  const [openSub, setOpenSub] = useState<"priority" | "tag" | "schedule" | null>(null)
+  const [openSub, setOpenSub] = useState<"priority" | "project" | "schedule" | null>(null)
   const [subAnchor, setSubAnchor] = useState<{ top: number; right: number; left: number } | null>(null)
 
   const fitsRight = anchor.right + GAP + DROPDOWN_WIDTH <= window.innerWidth - GAP
@@ -1041,7 +1014,7 @@ function TaskActionsDropdown({
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const handleSubHover = (sub: "priority" | "tag" | "schedule", e: React.MouseEvent<HTMLButtonElement>) => {
+  const handleSubHover = (sub: "priority" | "project" | "schedule", e: React.MouseEvent<HTMLButtonElement>) => {
     const rowRect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const dropdownRect = popoverRef.current?.getBoundingClientRect()
     if (dropdownRect) setSubAnchor({ top: rowRect.top, right: dropdownRect.right, left: dropdownRect.left })
@@ -1125,12 +1098,17 @@ function TaskActionsDropdown({
       </button>
 
       <button
-        className={cn(rowClass, openSub === "tag" && "bg-surface-2")}
-        onMouseEnter={(e) => handleSubHover("tag", e)}
-        onClick={(e) => handleSubHover("tag", e)}
+        className={cn(rowClass, openSub === "project" && "bg-surface-2")}
+        onMouseEnter={(e) => handleSubHover("project", e)}
+        onClick={(e) => handleSubHover("project", e)}
       >
-        <Tag className="h-3.5 w-3.5 text-text-muted" />
-        <span className="flex-1 text-left">Tag</span>
+        <span className="flex h-3 w-3 items-center justify-center">
+          <span
+            className="h-2 w-2 rounded-full"
+            style={{ backgroundColor: task.tagColor ?? "#94a3b8" }}
+          />
+        </span>
+        <span className="flex-1 text-left">Project</span>
         <ChevronRight className="h-3 w-3 text-text-faint" />
       </button>
 
@@ -1178,33 +1156,32 @@ function TaskActionsDropdown({
         </DropdownSubmenu>
       )}
 
-      {openSub === "tag" && subAnchor && (
+      {openSub === "project" && subAnchor && (
         <DropdownSubmenu
           anchor={subAnchor}
           onMouseEnter={handleContainerEnter}
           onMouseLeave={handleContainerLeave}
           submenuRef={submenuRef}
         >
-          <SubmenuRow
-            label="No tag"
-            isSelected={!task.tag}
-            onClick={() => {
-              onUpdateTask(task.id, { tag: "", tagColor: "#6b7280" })
-              closeWithAnimation()
-            }}
-          />
-          {categories.map((cat) => (
-            <SubmenuRow
-              key={cat.label}
-              label={cat.label}
-              color={cat.color}
-              isSelected={task.tag === cat.label}
-              onClick={() => {
-                onUpdateTask(task.id, { tag: cat.label, tagColor: cat.color })
-                closeWithAnimation()
-              }}
-            />
-          ))}
+          {projects.map((project) => {
+            return (
+              <SubmenuRow
+                key={project.id}
+                label={project.name}
+                icon={
+                  <span
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: project.color ?? "#94a3b8" }}
+                  />
+                }
+                isSelected={(task.projectId ?? "general") === project.id}
+                onClick={() => {
+                  onUpdateTask(task.id, { projectId: project.id })
+                  closeWithAnimation()
+                }}
+              />
+            )
+          })}
         </DropdownSubmenu>
       )}
 
@@ -1295,6 +1272,7 @@ function CompletedEmptyState() {
 
 function TaskRow({
   task,
+  projectName,
   onToggleComplete,
   onMoreClick,
   isDraggable,
@@ -1303,6 +1281,7 @@ function TaskRow({
   isDragging,
 }: {
   task: Task
+  projectName?: string
   onToggleComplete: () => void
   onMoreClick?: (anchor: { top: number; left: number; right: number; bottom: number }) => void
   isDraggable?: boolean
@@ -1329,7 +1308,7 @@ function TaskRow({
     }
   }, [task.dueDate])
 
-  const handleDragStart = (e: React.DragEvent) => {
+  const handleDragStart = (e: DragEvent) => {
     e.dataTransfer.setData("text/plain", task.id)
     e.dataTransfer.effectAllowed = "move"
     if (emptyDragImageRef.current) {
@@ -1378,11 +1357,14 @@ function TaskRow({
             </div>
           )}
 
-          {task.tag && (
-            <div className="group/chip relative flex items-center justify-center rounded bg-surface-2/60 p-1">
-              <Tag className="h-3 w-3" style={{ color: task.tagColor }} />
-              <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text opacity-0 shadow-md transition-opacity duration-150 group-hover/chip:opacity-100">
-                {task.tag}
+          {projectName && (
+            <div className="group/chip relative flex items-center justify-center rounded bg-surface-2/60 px-1.5 py-0.5 gap-1">
+              <span
+                className="h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: task.tagColor ?? "#94a3b8" }}
+              />
+              <span className="text-[10px] text-text-faint truncate">
+                {projectName}
               </span>
             </div>
           )}
@@ -1526,5 +1508,198 @@ function SidebarItem({
         </div>
       )}
     </div>
+  )
+}
+
+function ProjectItem({
+  label,
+  color,
+  count,
+  hasChevron,
+  isExpanded,
+  onToggleExpand,
+  onPlusClick,
+  onMoreClick,
+}: {
+  label: string
+  color?: string
+  count?: number
+  hasChevron?: boolean
+  isExpanded?: boolean
+  onToggleExpand?: () => void
+  onPlusClick?: () => void
+  onMoreClick?: (anchor: { top: number; left: number; right: number; bottom: number }) => void
+}) {
+  return (
+    <div
+      className={cn(
+        "group flex w-full items-center rounded px-2 py-1 text-sm cursor-pointer transition-colors"
+        // Removed: "hover:bg-surface-2/30"
+      )}
+      onClick={onToggleExpand}
+    >
+      <div className="flex flex-1 items-center min-w-0">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          {hasChevron && (
+            <ChevronRight
+              className={cn(
+                "h-3 w-3 shrink-0 text-text-faint transition-transform duration-200",
+                onToggleExpand && "group-hover:text-text",
+                isExpanded && "rotate-90"
+              )}
+            />
+          )}
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full opacity-70 transition-opacity duration-150 group-hover:opacity-100"
+            style={{ backgroundColor: color ?? "#94a3b8" }}
+          />
+          <span className="truncate text-text">{label}</span>
+          {count !== undefined && <span className="shrink-0 text-[11px] text-text-faint tabular-nums">{count}</span>}
+        </div>
+
+        {(onPlusClick || onMoreClick) && (
+          <div className="ml-auto flex shrink-0 items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+            {onPlusClick && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onPlusClick()
+                }}
+                className="flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {onMoreClick && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                  onMoreClick({
+                    top: rect.top,
+                    left: rect.left,
+                    right: rect.right,
+                    bottom: rect.bottom,
+                  })
+                }}
+                className="flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function AddProjectPopover({
+  pos,
+  existingNames,
+  onClose,
+  onCreate,
+}: {
+  pos: { top: number; left: number }
+  existingNames: string[]
+  onClose: () => void
+  onCreate: (name: string, icon: string) => void
+}) {
+  const [name, setName] = useState("")
+  const [icon, setIcon] = useState<string>("folder")
+  const [error, setError] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const id = window.setTimeout(() => inputRef.current?.focus(), 0)
+    return () => window.clearTimeout(id)
+  }, [])
+
+  const lowerExisting = useMemo(
+    () => existingNames.map((n) => n.trim().toLowerCase()).filter(Boolean),
+    [existingNames]
+  )
+
+  const validate = useCallback(
+    (value: string) => {
+      const trimmed = value.trim()
+      if (!trimmed) {
+        setError("Name cannot be empty")
+        return false
+      }
+      if (lowerExisting.includes(trimmed.toLowerCase())) {
+        setError("A project with this name already exists")
+        return false
+      }
+      setError(null)
+      return true
+    },
+    [lowerExisting]
+  )
+
+  const handleSave = () => {
+    if (!validate(name)) return
+    onCreate(name.trim(), icon)
+  }
+
+  const ICON_KEYS = ["folder", "sparkles", "fileText", "star", "book", "layout", "image"] as const
+
+  return createPortal(
+    <div
+      className="fixed z-[120] w-[260px] rounded-xl border border-border/50 bg-background p-3 shadow-lg"
+      style={{ top: pos.top, left: pos.left }}
+    >
+      <div className="mb-2">
+        <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-text-muted">
+          Project name
+        </label>
+        <input
+          ref={inputRef}
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value)
+            if (error) validate(e.target.value)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              handleSave()
+            } else if (e.key === "Escape") {
+              e.preventDefault()
+              onClose()
+            }
+          }}
+          className="w-full rounded-md border border-border/60 bg-surface-2 px-2 py-1.5 text-xs text-text outline-none placeholder:text-text-muted"
+          placeholder="New project"
+        />
+        {error && <p className="mt-1 text-[11px] text-red-400">{error}</p>}
+      </div>
+
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded border border-border/50 bg-surface-2 px-3 py-1.5 text-[11px] font-medium text-text-muted transition-colors hover:bg-surface"
+        >
+          Discard
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!!error || !name.trim()}
+          className={cn(
+            "rounded px-3 py-1.5 text-[11px] font-medium transition-all",
+            !error && name.trim()
+              ? "bg-app-accent text-app-accent-foreground shadow-sm hover:brightness-110 hover:shadow-md"
+              : "cursor-not-allowed bg-app-accent/30 text-text-faint"
+          )}
+        >
+          Save
+        </button>
+      </div>
+    </div>,
+    document.body
   )
 }

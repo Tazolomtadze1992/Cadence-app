@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { createPortal } from "react-dom"
 import { startOfWeek, addDays, isToday, getDate, format } from "date-fns"
-import { Clock, Calendar, Repeat } from "lucide-react"
+import { Clock, Calendar, Repeat, Folder, Sparkles, FileText, Star, BookOpen, Layout, Image as ImageIcon } from "lucide-react"
 import { PriorityIcon } from "@/components/chrono/sidebar"
 import { cn } from "@/lib/utils"
 
@@ -49,6 +49,7 @@ interface CalendarEvent {
   tagColor?: string
   tag?: string
   priority?: string
+  projectName?: string
 }
 
 type DragState =
@@ -625,17 +626,6 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                         <p className="truncate text-[10px] text-text-faint/60">
                           {formatTime12(ev.startMinutes!)} - {formatTime12(ev.endMinutes!)}
                         </p>
-
-                        {ev.priority && ev.priority !== "none" && (
-                          <div className="absolute right-3 bottom-5 flex items-center">
-                            <div className="group/chip relative flex shrink-0 items-center justify-center rounded-sm bg-secondary px-1.5 py-1.5">
-                              <PriorityIcon priority={ev.priority} className="h-2.5 w-2.5 opacity-70" />
-                              <span className="pointer-events-none absolute -top-7 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text capitalize opacity-0 shadow-md transition-opacity duration-150 group-hover/chip:opacity-100">
-                                {ev.priority}
-                              </span>
-                            </div>
-                          </div>
-                        )}
 
                         <div
                           className={cn(

@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/utils"
 import { ChevronLeft, ChevronRight, RotateCcw, Clock } from "lucide-react"
 import type { Task } from "@/app/page"
+import type { CanvasProject } from "./canvas-board"
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function formatTime12(minutes: number): string {
@@ -73,8 +74,8 @@ function EmptyState({ onAddTask }: { onAddTask?: () => void }) {
 }
 
 // ─── Scheduled task row (left bar, title, start time, duration) ───────────────
-function ScheduledTaskRow({ task }: { task: Task }) {
-  const color = task.tagColor ?? "#6b7280"
+function ScheduledTaskRow({ task, project }: { task: Task; project: CanvasProject | null }) {
+  const color = project?.color ?? task.tagColor ?? "#6b7280"
   const start = task.startMinutes!
   const end = task.endMinutes!
 
@@ -85,9 +86,15 @@ function ScheduledTaskRow({ task }: { task: Task }) {
         style={{ backgroundColor: color }}
       />
       <div className="min-w-0 flex-1 pl-4 pr-3 py-2 flex flex-col gap-0.5">
-        <p className="truncate text-sm font-medium text-text" style={{ color }}>
-          {task.title}
-        </p>
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{ backgroundColor: color }}
+          />
+          <p className="truncate text-sm font-medium text-text" style={{ color }}>
+            {task.title}
+          </p>
+        </div>
         <p className="text-xs text-text-muted">{formatTime12(start)}</p>
         <p className="text-xs text-text-muted">{formatDuration(start, end)}</p>
       </div>
@@ -202,9 +209,15 @@ function MiniCalendar({
 }
 
 // ─── Main Component ──────────────────────────────────────────────────────────
-export function AgendaView({ tasks = [] }: { tasks?: Task[] }) {
+export function AgendaView({ tasks = [], projects = [] }: { tasks?: Task[]; projects?: CanvasProject[] }) {
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date())
   const [currentMonth, setCurrentMonth] = useState<Date>(() => new Date())
+
+  const projectById = useMemo(() => {
+    const map = new Map<string, CanvasProject>()
+    for (const p of projects) map.set(p.id, p)
+    return map
+  }, [projects])
 
   const handlePrevMonth = useCallback(() => {
     setCurrentMonth((prev) => subMonths(prev, 1))
@@ -293,7 +306,11 @@ export function AgendaView({ tasks = [] }: { tasks?: Task[] }) {
                 </div>
                 <div className="space-y-2">
                   {scheduledTasks.map((task) => (
-                    <ScheduledTaskRow key={task.id} task={task} />
+                    <ScheduledTaskRow
+                      key={task.id}
+                      task={task}
+                      project={projectById.get((task.projectId ?? "general").trim() || "general") ?? null}
+                    />
                   ))}
                 </div>
               </div>
@@ -320,24 +337,37 @@ export function AgendaView({ tasks = [] }: { tasks?: Task[] }) {
                 </div>
                 <div className="space-y-2">
                   {unscheduledTasks.map((task) => (
+                    (() => {
+                      const project =
+                        projectById.get((task.projectId ?? "general").trim() || "general") ?? null
+                      const color = project?.color ?? task.tagColor ?? "#6b7280"
+                      return (
                     <div
                       key={task.id}
                       className="relative flex w-full items-stretch gap-0 overflow-hidden rounded-md"
                     >
                       <div
                         className="absolute left-0 top-1/2 h-10 w-[4px] -translate-y-1/2 rounded-full"
-                        style={{ backgroundColor: task.tagColor ?? "#6b7280" }}
+                        style={{ backgroundColor: color }}
                       />
                       <div className="min-w-0 flex-1 pl-4 pr-3 py-2 flex flex-col gap-0.5">
-                        <p
-                          className="truncate text-sm font-medium"
-                          style={{ color: task.tagColor ?? undefined }}
-                        >
-                          {task.title}
-                        </p>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: color }}
+                          />
+                          <p
+                            className="truncate text-sm font-medium"
+                            style={{ color }}
+                          >
+                            {task.title}
+                          </p>
+                        </div>
                         <p className="text-xs text-text-muted">No time set</p>
                       </div>
                     </div>
+                      )
+                    })()
                   ))}
                 </div>
               </div>

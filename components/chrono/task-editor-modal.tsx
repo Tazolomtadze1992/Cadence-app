@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils"
 import { Tag, Repeat, CornerDownLeft, Clock, ArrowRight } from "lucide-react"
 import { Calendar } from "@/components/ui/calendar"
 import { format, startOfDay } from "date-fns"
+import type { CanvasProject } from "./canvas-board"
 
 function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16)
@@ -19,6 +20,7 @@ interface TaskData {
   schedule: string
   scheduledDate?: string
   tag: string
+  projectId: string
   priority: string
   repeat: string
   startTimeMinutes?: number
@@ -117,6 +119,7 @@ export interface TaskEditorInitialData {
   presetScheduledDate?: string
   /** When true, duration is left empty (no start/end). Used for sidebar + flows. */
   noDuration?: boolean
+  presetProjectId?: string
 }
 
 export interface TaskEditorSaveData extends TaskData {
@@ -129,6 +132,7 @@ export interface EditingTaskData {
   title: string
   schedule: string
   tag: string
+  projectId?: string
   priority: string
   repeat: string
   startTimeMinutes?: number
@@ -141,12 +145,14 @@ export function TaskEditorPanel({
   onEditSave,
   initialData,
   editingTask,
+  projects,
 }: {
   onClose: () => void
   onSave?: (data: TaskEditorSaveData) => void
   onEditSave?: (id: string, data: TaskEditorSaveData) => void
   initialData?: TaskEditorInitialData | null
   editingTask?: EditingTaskData | null
+  projects: CanvasProject[]
 }) {
   const isEditMode = !!editingTask
 
@@ -156,6 +162,7 @@ export function TaskEditorPanel({
         title: editingTask.title,
         schedule: editingTask.schedule,
         tag: editingTask.tag,
+        projectId: editingTask.projectId ?? "general",
         priority: editingTask.priority,
         repeat: editingTask.repeat,
         startTimeMinutes: editingTask.startTimeMinutes,
@@ -170,6 +177,7 @@ export function TaskEditorPanel({
         schedule: presetSchedule,
         scheduledDate: presetScheduledDate,
         tag: initialData?.presetTag ?? "",
+        projectId: initialData?.presetProjectId ?? "general",
         priority: "none",
         repeat: "none",
         startTimeMinutes: undefined,
@@ -183,6 +191,7 @@ export function TaskEditorPanel({
       schedule: presetSchedule,
       scheduledDate: presetScheduledDate,
       tag: initialData?.presetTag ?? "",
+      projectId: initialData?.presetProjectId ?? "general",
       priority: "none",
       repeat: "none",
       startTimeMinutes: start,
@@ -205,6 +214,13 @@ export function TaskEditorPanel({
     priorityOptions.find((o) => o.value === task.priority) || priorityOptions[3]
   const selectedRepeat =
     repeatOptions.find((o) => o.value === task.repeat) || repeatOptions[0]
+
+  const projectById = useCallback(
+    (id: string) => projects.find((p) => p.id === id) ?? projects.find((p) => p.id === "general") ?? null,
+    [projects]
+  )
+
+  const selectedProject = projectById(task.projectId)
 
   const startScrollRef = useRef<HTMLDivElement>(null)
   const endScrollRef = useRef<HTMLDivElement>(null)
@@ -541,12 +557,56 @@ export function TaskEditorPanel({
           </div>
         </FieldRow>
 
-        {/* Tag group */}
-        <FieldRow label="Tag group">
-          <TagAutocomplete
-            value={task.tag}
-            onChange={(tag) => setTask({ ...task, tag })}
-          />
+        {/* Project */}
+        <FieldRow label="Project">
+          <DropdownField
+            id="project"
+            activeDropdown={activeDropdown}
+            setActiveDropdown={setActiveDropdown}
+            openUp
+            trigger={
+              <div className="group flex items-center gap-2">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: selectedProject?.color ?? "#94a3b8" }}
+                />
+                <TriggerValue>{selectedProject?.name ?? "General"}</TriggerValue>
+              </div>
+            }
+          >
+            {projects.map((p) => {
+              return (
+                <button
+                  key={p.id}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setTask({ ...task, projectId: p.id })
+                    setActiveDropdown(null)
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
+                >
+                  <span
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: p.color ?? "#94a3b8" }}
+                  />
+                  <span className="text-text">{p.name}</span>
+                  {task.projectId === p.id && (
+                    <span className="ml-auto text-text-muted">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <path
+                          d="M2.5 7L5.5 10L11.5 4"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </DropdownField>
         </FieldRow>
 
         {/* Priority */}

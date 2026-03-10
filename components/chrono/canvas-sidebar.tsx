@@ -2,21 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import {
-  BookOpen,
-  FileText,
-  Folder,
-  FolderPlus,
-  Image as ImageIcon,
-  Layout,
-  MoreHorizontal,
-  Search,
-  Sparkles,
-  Star,
-  StickyNote,
-  Pencil,
-  Trash2,
-} from "lucide-react"
+import { FolderPlus, MoreHorizontal, Search, Pencil, Trash2, Check } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { CanvasProject } from "./canvas-board"
@@ -26,9 +12,10 @@ interface CanvasSidebarProps {
   collapsed: boolean
   onToggleSidebar: () => void
   projects: CanvasProject[]
+  projectTaskCounts: Record<string, number>
   activeProjectId: string | null
   onSelectProject: (projectId: string) => void
-  onAddProject: () => void
+  onAddProject: (name?: string, icon?: string) => void
   onUpdateProject: (projectId: string, updates: Partial<CanvasProject>) => void
   onDeleteProject: (projectId: string) => void
   appMode: import("./top-bar").AppMode
@@ -39,6 +26,7 @@ interface CanvasSidebarProps {
 export function CanvasSidebar({
   collapsed,
   projects,
+  projectTaskCounts,
   activeProjectId,
   onSelectProject,
   onAddProject,
@@ -107,7 +95,7 @@ export function CanvasSidebar({
               </div>
               <button
                 type="button"
-                onClick={onAddProject}
+                onClick={() => onAddProject()}
                 className="flex h-8 w-8 items-center justify-center rounded-md bg-surface-2/60 text-text-muted transition-colors hover:bg-surface hover:text-text"
               >
                 <FolderPlus className="h-4 w-4" />
@@ -124,7 +112,6 @@ export function CanvasSidebar({
                   {projects.map((project) => {
                     const isActive = project.id === activeProjectId
                     const isRenaming = renamingProjectId === project.id
-                    const Icon = getProjectIcon(project.icon)
                     return (
                       <div
                         key={project.id}
@@ -145,11 +132,9 @@ export function CanvasSidebar({
                         )}
                       >
                         <div className="flex min-w-0 flex-1 items-center gap-2">
-                          <Icon
-                            className={cn(
-                              "h-3.5 w-3.5 shrink-0 transition-colors",
-                              isActive ? "text-text" : "text-text-muted group-hover:text-text"
-                            )}
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: project.color ?? "#94a3b8" }}
                           />
                           {isRenaming ? (
                             <input
@@ -203,10 +188,11 @@ export function CanvasSidebar({
               return (
                 <ProjectActionsDropdown
                   anchor={actionsDropdown.anchor}
-                  currentIcon={project.icon ?? "folder"}
+                  currentColor={project.color}
+                  deleteDisabled={(projectTaskCounts[project.id] ?? 0) > 0}
                   onClose={() => setActionsDropdown(null)}
-                  onIconChange={(icon) => {
-                    onUpdateProject(project.id, { icon })
+                  onColorChange={(color) => {
+                    onUpdateProject(project.id, { color })
                   }}
                   onRename={() => {
                     setActionsDropdown(null)
@@ -256,38 +242,20 @@ export function CanvasSidebar({
   )
 }
 
-const PROJECT_ICONS: Record<string, LucideIcon> = {
-  folder: Folder,
-  sparkles: Sparkles,
-  fileText: FileText,
-  star: Star,
-  book: BookOpen,
-  layout: Layout,
-  image: ImageIcon,
-  note: StickyNote,
-}
-
-const PROJECT_ICON_OPTIONS = ["folder", "sparkles", "fileText", "star", "book", "layout", "image", "note"] as const
-
-type ProjectIconKey = (typeof PROJECT_ICON_OPTIONS)[number]
-
-function getProjectIcon(name?: string): LucideIcon {
-  if (!name) return Folder
-  return PROJECT_ICONS[name] ?? Folder
-}
-
-function ProjectActionsDropdown({
+export function ProjectActionsDropdown({
   anchor,
-  currentIcon,
+  currentColor,
+  deleteDisabled = false,
   onClose,
-  onIconChange,
+  onColorChange,
   onRename,
   onDelete,
 }: {
   anchor: { top: number; left: number; right: number; bottom: number }
-  currentIcon: string
+  currentColor?: string
+  deleteDisabled?: boolean
   onClose: () => void
-  onIconChange: (icon: ProjectIconKey) => void
+  onColorChange?: (color: string) => void
   onRename: () => void
   onDelete: () => void
 }) {
@@ -324,7 +292,18 @@ function ProjectActionsDropdown({
     return () => document.removeEventListener("keydown", handleKey)
   }, [onClose])
 
-  const selected = (currentIcon || "folder") as ProjectIconKey
+  const PROJECT_COLORS = [
+    "#ef4444",
+    "#f97316",
+    "#eab308",
+    "#22c55e",
+    "#3b82f6",
+    "#6366f1",
+    "#8b5cf6",
+    "#ec4899",
+    "#14b8a6",
+    "#6b7280",
+  ]
 
   return createPortal(
     <div
@@ -339,31 +318,33 @@ function ProjectActionsDropdown({
         transformOrigin: origin,
       }}
     >
-      <div className="mb-3">
-        <div className="grid grid-cols-4 gap-1.5">
-          {PROJECT_ICON_OPTIONS.map((key) => {
-            const Icon = getProjectIcon(key)
-            const isActive = selected === key
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => onIconChange(key)}
-                className={cn(
-                  "flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-text-muted transition-colors",
-                  isActive
-                    ? "border-text-faint/20 bg-text/faint/10 text-text"
-                    : "hover:border-border/60 hover:bg-surface-2 hover:text-text"
-                )}
-              >
-                <Icon className="h-3.5 w-3.5" />
-              </button>
-            )
-          })}
+      {onColorChange && (
+        <div className="mb-2">
+          <div className="grid grid-cols-7 gap-1">
+            {PROJECT_COLORS.map((color) => {
+              const isActive = color === currentColor
+              return (
+                <button
+                  key={color}
+                  type="button"
+                  onClick={() => onColorChange(color)}
+                  className={cn(
+                    "relative flex h-4 w-4 items-center justify-center rounded-[4px] transition-transform",
+                    "focus-visible:outline-none",
+                    !isActive && "hover:scale-[1.08]"
+                  )}
+                  style={{ backgroundColor: color }}
+                >
+                  {isActive && (
+                    <Check className="h-2.5 w-2.5 text-white" />
+                  )}
+                </button>
+              )
+            })}
+          </div>
+          <div className="mt-2 h-px bg-border/20" />
         </div>
-      </div>
-
-      <div className="my-1.5 h-px bg-border/20" />
+      )}
 
       <button
         type="button"
@@ -376,8 +357,17 @@ function ProjectActionsDropdown({
 
       <button
         type="button"
-        onClick={() => onDelete()}
-        className="mt-0.5 flex w-full items-center gap-2.5 rounded-sm px-2 py-1 text-xs text-red-400 transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:bg-red-500/10"
+        disabled={deleteDisabled}
+        onClick={() => {
+          if (deleteDisabled) return
+          onDelete()
+        }}
+        className={cn(
+          "mt-0.5 flex w-full items-center gap-2.5 rounded-sm px-2 py-1 text-xs transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)]",
+          deleteDisabled
+            ? "cursor-not-allowed text-text-faint opacity-60"
+            : "text-red-400 hover:bg-red-500/10"
+        )}
       >
         <Trash2 className="h-3 w-3" />
         Delete

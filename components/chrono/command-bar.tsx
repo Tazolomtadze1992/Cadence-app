@@ -6,6 +6,7 @@ import { Plus, ChevronLeft, ChevronRight, ArrowRight, ArrowLeft } from "lucide-r
 import { cn } from "@/lib/utils"
 import { TaskEditorPanel } from "@/components/chrono/task-editor-modal"
 import type { TaskEditorInitialData, TaskEditorSaveData, EditingTaskData } from "@/components/chrono/task-editor-modal"
+import type { CanvasProject } from "@/components/chrono/canvas-board"
 import {
   format,
   parse,
@@ -90,6 +91,7 @@ export function CommandBar({
   onGoToToday,
   onPrevWeek,
   onNextWeek,
+  projects,
 }: {
   externalOpen?: TaskEditorInitialData | null
   onExternalOpenHandled?: () => void
@@ -101,6 +103,7 @@ export function CommandBar({
   onGoToToday?: () => void
   onPrevWeek?: () => void
   onNextWeek?: () => void
+  projects: CanvasProject[]
 }) {
   const [expanded, setExpanded] = useState(false)
   const [initialData, setInitialData] = useState<TaskEditorInitialData | null>(null)
@@ -229,6 +232,7 @@ export function CommandBar({
               onEditSave={onEditSave}
               initialData={initialData}
               editingTask={editingTask}
+              projects={projects}
             />
           )}
         </div>

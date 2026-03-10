@@ -1,13 +1,14 @@
 "use client"
 
 import { useState, useCallback, useMemo, useEffect } from "react"
+import { motion, AnimatePresence } from "framer-motion"
 import { startOfWeek, addDays, addWeeks, startOfDay, format } from "date-fns"
 import { AppSidebar } from "@/components/chrono/sidebar"
 import { TopBar, type AppMode } from "@/components/chrono/top-bar"
 import { AccountPanel } from "@/components/chrono/account-panel"
 import { CalendarGrid } from "@/components/chrono/calendar-grid"
 import { CommandBar } from "@/components/chrono/command-bar"
-import { CanvasBoard, type CanvasProject } from "@/components/chrono/canvas-board"
+import { CanvasBoard, type CanvasItem, type CanvasProject } from "@/components/chrono/canvas-board"
 import { CanvasSidebar } from "../components/chrono/canvas-sidebar"
 import { CanvasCommandBar } from "@/components/chrono/canvas-command-bar"
 import { SEED_TAGS } from "@/components/chrono/task-editor-modal"
@@ -22,6 +23,7 @@ export interface Task {
   title: string
   tag: string
   tagColor: string
+  projectId?: string
   priority: string
   repeat: string
   schedule: string
@@ -31,9 +33,14 @@ export interface Task {
 
 const INITIAL_CANVAS_PROJECTS: CanvasProject[] = [
   {
+    id: "general",
+    name: "General",
+    color: "#94a3b8",
+    items: [],
+  },
+  {
     id: "p1",
     name: "Ambient UI",
-    icon: "sparkles",
     color: "#f97316",
     items: [
       {
@@ -79,7 +86,6 @@ const INITIAL_CANVAS_PROJECTS: CanvasProject[] = [
   {
     id: "p2",
     name: "Research notes",
-    icon: "fileText",
     color: "#3b82f6",
     items: [
       {
@@ -103,6 +109,26 @@ const STORAGE_KEYS = {
   sidebarView: "cadence_sidebar_view",
 } as const
 
+const sidebarShellSlideVariants = {
+  enter: (direction: 1 | -1) => ({
+    x: direction > 0 ? "100%" : "-100%",
+    opacity: 0,
+  }),
+  center: {
+    x: 0,
+    opacity: 1,
+  },
+  exit: (direction: 1 | -1) => ({
+    x: direction > 0 ? "-100%" : "100%",
+    opacity: 0,
+  }),
+}
+
+const sidebarShellSlideTransition = {
+  duration: 0.2,
+  ease: [0.2, 0.8, 0.2, 1] as const,
+}
+
 // Chrono App
 export default function ChronoApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -125,38 +151,105 @@ export default function ChronoApp() {
     clientWidth: number
     clientHeight: number
   } | null>(null)
+  const [sidebarShellDirection, setSidebarShellDirection] = useState<1 | -1>(1)
 
   const weekStart = useMemo(() => startOfWeek(anchorDate, { weekStartsOn: 0 }), [anchorDate])
+
+  const tasksWithProjectIdentity = useMemo(() => {
+    const byId = new Map(canvasProjects.map((p) => [p.id, p] as const))
+    return tasks.map((t) => {
+      const pid = (t.projectId ?? "general").trim() || "general"
+      const project = byId.get(pid) ?? byId.get("general") ?? null
+      return {
+        ...t,
+        tagColor: project?.color ?? t.tagColor ?? "#94a3b8",
+        projectName: project?.name,
+      }
+    })
+  }, [canvasProjects, tasks])
+
+  const taskCountByProjectId = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const t of tasks) {
+      const pid = (t.projectId ?? "general").trim() || "general"
+      counts[pid] = (counts[pid] ?? 0) + 1
+    }
+    return counts
+  }, [tasks])
 
   // ─── Hydrate state from localStorage on first mount ─────────────────────
   useEffect(() => {
     if (typeof window === "undefined") return
 
-    try {
-      const storedTasks = window.localStorage.getItem(STORAGE_KEYS.tasks)
-      if (storedTasks) {
-        const parsed = JSON.parse(storedTasks)
-        if (Array.isArray(parsed)) {
-          setTasks(parsed as Task[])
-        }
-      }
-    } catch {
-      // ignore malformed tasks
+    const ensureGeneralProject = (projects: CanvasProject[]) => {
+      if (projects.some((p) => p.id === "general")) return projects
+      return [
+        {
+          id: "general",
+          name: "General",
+          icon: "folder",
+          color: "#94a3b8",
+          items: [],
+        },
+        ...projects,
+      ]
     }
 
-    let hydratedProjects: CanvasProject[] | null = null
-    try {
-      const storedProjects = window.localStorage.getItem(STORAGE_KEYS.canvasProjects)
-      if (storedProjects) {
-        const parsed = JSON.parse(storedProjects)
-        if (Array.isArray(parsed)) {
-          hydratedProjects = parsed as CanvasProject[]
-          setCanvasProjects(hydratedProjects)
-        }
+    const readJsonArray = <T,>(key: string): T[] | null => {
+      try {
+        const raw = window.localStorage.getItem(key)
+        if (!raw) return null
+        const parsed = JSON.parse(raw)
+        return Array.isArray(parsed) ? (parsed as T[]) : null
+      } catch {
+        return null
       }
-    } catch {
-      // ignore malformed projects
     }
+
+    const storedTasks = readJsonArray<Task>(STORAGE_KEYS.tasks) ?? null
+    const storedProjects = readJsonArray<CanvasProject>(STORAGE_KEYS.canvasProjects) ?? null
+
+    // Start from stored values if present, otherwise from seeds, and ensure a default color.
+    let nextProjects = ensureGeneralProject(storedProjects ?? INITIAL_CANVAS_PROJECTS).map((p) => ({
+      ...p,
+      color: p.color ?? "#94a3b8",
+    })) as CanvasProject[]
+    let nextTasks = (storedTasks ?? []) as Task[]
+
+    // Migrate legacy tag-based tasks → projectId
+    if (nextTasks.length > 0) {
+      const nameToProjectId = new Map(
+        nextProjects.map((p) => [p.name.trim().toLowerCase(), p.id] as const)
+      )
+
+      const maybeCreateProjectFromTag = (tagName: string, color?: string) => {
+        const key = tagName.trim().toLowerCase()
+        const existing = nameToProjectId.get(key)
+        if (existing) return existing
+        const id = crypto.randomUUID()
+        const proj: CanvasProject = {
+          id,
+          name: tagName.trim(),
+          color: typeof color === "string" && color.startsWith("#") ? color : "#94a3b8",
+          items: [],
+        }
+        nextProjects = [...nextProjects, proj]
+        nameToProjectId.set(key, id)
+        return id
+      }
+
+      nextTasks = nextTasks.map((t) => {
+        if (t.projectId) return t
+        const tag = (t.tag ?? "").trim()
+        if (!tag) return { ...t, projectId: "general" }
+        const match = nameToProjectId.get(tag.toLowerCase())
+        const projectId = match ?? maybeCreateProjectFromTag(tag, t.tagColor)
+        return { ...t, projectId }
+      })
+    }
+
+    setTasks(nextTasks)
+    setCanvasProjects(nextProjects)
 
     try {
       const storedMode = window.localStorage.getItem(STORAGE_KEYS.appMode)
@@ -179,11 +272,8 @@ export default function ChronoApp() {
     try {
       const storedActiveId = window.localStorage.getItem(STORAGE_KEYS.activeProjectId)
       if (storedActiveId) {
-        const projectsSource = hydratedProjects ?? INITIAL_CANVAS_PROJECTS
-        const exists = projectsSource.some((p) => p.id === storedActiveId)
-        if (exists) {
-          setActiveProjectId(storedActiveId)
-        }
+        const exists = nextProjects.some((p) => p.id === storedActiveId)
+        if (exists) setActiveProjectId(storedActiveId)
       }
     } catch {
       // ignore
@@ -199,7 +289,7 @@ export default function ChronoApp() {
   }, [])
 
   const handleSidebarQuickAdd = useCallback(
-    (preset: { tag?: string; date?: Date; schedule?: string }) => {
+    (preset: { tag?: string; date?: Date; schedule?: string; projectId?: string }) => {
       if (preset.date) {
         const d = startOfDay(preset.date)
         setAnchorDate(d)
@@ -209,6 +299,7 @@ export default function ChronoApp() {
           presetSchedule: preset.schedule,
           presetScheduledDate: preset.schedule === "picked" ? d.toISOString() : undefined,
           noDuration: true,
+          presetProjectId: preset.projectId,
         })
         return
       }
@@ -217,6 +308,7 @@ export default function ChronoApp() {
       setPendingOpen({
         presetTag: preset.tag,
         presetSchedule: preset.schedule,
+        presetProjectId: preset.projectId,
         noDuration: true,
       })
     },
@@ -227,13 +319,73 @@ export default function ChronoApp() {
     setAnchorDate((prev) => addWeeks(prev, -1))
   }, [])
 
-  const handleSidebarModeClick = useCallback((view: "tasks" | "agenda" | "canvas") => {
-    if (view === "canvas") {
-      setAppMode("canvas")
-      return
-    }
-    setAppMode("schedule")
-    setSidebarView(view)
+  const handleSidebarModeClick = useCallback(
+    (view: "tasks" | "agenda" | "canvas") => {
+      if (view === "canvas") {
+        if (appMode !== "canvas") setSidebarShellDirection(1)
+        setAppMode("canvas")
+        return
+      }
+      if (appMode === "canvas") setSidebarShellDirection(-1)
+      setAppMode("schedule")
+      setSidebarView(view)
+    },
+    [appMode]
+  )
+
+  const createCanvasNote = useCallback(
+    (projectId: string, x: number, y: number) => {
+      const NOTE_WIDTH = 360
+      const NOTE_HEIGHT = 140
+      const BOARD_WIDTH = 2200
+      const BOARD_HEIGHT = 1400
+
+      let clampedX = x
+      let clampedY = y
+      const maxX = Math.max(0, BOARD_WIDTH - NOTE_WIDTH)
+      const maxY = Math.max(0, BOARD_HEIGHT - NOTE_HEIGHT)
+      if (clampedX < 0) clampedX = 0
+      else if (clampedX > maxX) clampedX = maxX
+      if (clampedY < 0) clampedY = 0
+      else if (clampedY > maxY) clampedY = maxY
+
+      const id = crypto.randomUUID()
+
+      setCanvasProjects((prev) =>
+        prev.map((project) =>
+          project.id === projectId
+            ? {
+                ...project,
+                items: [
+                  ...project.items,
+                  {
+                    id,
+                    type: "note" as const,
+                    x: clampedX,
+                    y: clampedY,
+                    width: NOTE_WIDTH,
+                    title: "Untitled note",
+                    body: "Start writing...",
+                  },
+                ],
+              }
+            : project
+        )
+      )
+
+      setCanvasAutoEditNoteId(id)
+    },
+    []
+  )
+
+  const handleCanvasItemDelete = useCallback((projectId: string, itemId: string) => {
+    setCanvasProjects((prev) =>
+      prev.map((project) =>
+        project.id === projectId
+          ? { ...project, items: project.items.filter((item) => item.id !== itemId) }
+          : project
+      )
+    )
   }, [])
 
   // ─── Persist state to localStorage ───────────────────────────────────────
@@ -369,6 +521,7 @@ export default function ChronoApp() {
       title: t.title,
       schedule: t.schedule,
       tag: t.tag,
+      projectId: t.projectId,
       priority: t.priority,
       repeat: t.repeat,
       startTimeMinutes: t.startMinutes,
@@ -377,7 +530,10 @@ export default function ChronoApp() {
   }, [tasks])
 
   const handleEditSave = useCallback((id: string, data: TaskEditorSaveData) => {
-    const tagEntry = SEED_TAGS.find((t) => t.name === data.tag)
+    const project =
+      canvasProjects.find((p) => p.id === data.projectId) ??
+      canvasProjects.find((p) => p.id === "general") ??
+      null
     const dueDate = format(addDays(weekStart, data.dayIndex), "yyyy-MM-dd")
     setTasks((prev) =>
       prev.map((t) =>
@@ -388,8 +544,10 @@ export default function ChronoApp() {
               startMinutes: data.startTimeMinutes,
               endMinutes: data.endTimeMinutes,
               title: data.title || t.title,
-              tag: data.tag,
-              tagColor: tagEntry?.color ?? t.tagColor,
+              projectId: data.projectId,
+              // keep legacy tag visuals in sync with projects for now
+              tag: project?.name ?? t.tag,
+              tagColor: project?.color ?? t.tagColor,
               priority: data.priority,
               repeat: data.repeat,
               schedule: data.schedule,
@@ -399,14 +557,17 @@ export default function ChronoApp() {
       )
     )
     setEditingTask(null)
-  }, [weekStart])
+  }, [canvasProjects, weekStart])
 
   const handleEditDone = useCallback(() => {
     setEditingTask(null)
   }, [])
 
   const handleTaskSave = useCallback((data: TaskEditorSaveData) => {
-    const tagEntry = SEED_TAGS.find((t) => t.name === data.tag)
+    const project =
+      canvasProjects.find((p) => p.id === data.projectId) ??
+      canvasProjects.find((p) => p.id === "general") ??
+      null
     const dueDate = format(addDays(weekStart, data.dayIndex), "yyyy-MM-dd")
     setTasks((prev) => [
       ...prev,
@@ -416,8 +577,9 @@ export default function ChronoApp() {
         startMinutes: data.startTimeMinutes,
         endMinutes: data.endTimeMinutes,
         title: data.title || "New Task",
-        tag: data.tag,
-        tagColor: tagEntry?.color ?? "#6b7280",
+        projectId: data.projectId,
+        tag: project?.name ?? "General",
+        tagColor: project?.color ?? "#94a3b8",
         priority: data.priority,
         repeat: data.repeat,
         schedule: data.schedule,
@@ -425,7 +587,7 @@ export default function ChronoApp() {
         dueDate,
       },
     ])
-  }, [weekStart])
+  }, [canvasProjects, weekStart])
 
   const activeCanvasProject = useMemo(
     () => canvasProjects.find((p) => p.id === activeProjectId) ?? canvasProjects[0] ?? null,
@@ -441,6 +603,28 @@ export default function ChronoApp() {
                 ...project,
                 items: project.items.map((item) =>
                   item.id === itemId ? { ...item, x, y } : item
+                ),
+              }
+            : project
+        )
+      )
+    },
+    []
+  )
+
+  const handleCanvasItemUpdate = useCallback(
+    (projectId: string, itemId: string, updates: Partial<CanvasItem>) => {
+      setCanvasProjects((prev) =>
+        prev.map((project) =>
+          project.id === projectId
+            ? {
+                ...project,
+                items: project.items.map((item) =>
+                  item.id === itemId
+                    ? item.type === "note"
+                      ? { ...item, ...(updates as Partial<Extract<CanvasItem, { type: "note" }>>) }
+                      : { ...item, ...(updates as Partial<Extract<CanvasItem, { type: "image" }>>) }
+                    : item
                 ),
               }
             : project
@@ -503,6 +687,9 @@ export default function ChronoApp() {
 
   const handleCanvasProjectDelete = useCallback(
     (projectId: string) => {
+      // Block deletion if any tasks belong to this project.
+      const hasTasks = tasks.some((t) => ((t.projectId ?? "general").trim() || "general") === projectId)
+      if (hasTasks) return
       setCanvasProjects((prev) => {
         const next = prev.filter((project) => project.id !== projectId)
         if (next.length === 0) {
@@ -513,17 +700,17 @@ export default function ChronoApp() {
         return next
       })
     },
-    [activeProjectId]
+    [activeProjectId, tasks]
   )
-  const handleAddProject = useCallback(() => {
+  const handleAddProject = useCallback((name?: string, _unusedIcon?: string) => {
     setCanvasProjects((prev) => {
       const id = crypto.randomUUID()
+      const displayName = name?.trim() || `New project ${prev.length + 1}`
       const next = [
         ...prev,
         {
           id,
-          name: `New project ${prev.length + 1}`,
-          icon: "folder",
+          name: displayName,
           color: "#94a3b8",
           items: [],
         },
@@ -564,32 +751,9 @@ export default function ChronoApp() {
     else if (x > maxX) x = maxX
     if (y < 0) y = 0
     else if (y > maxY) y = maxY
-    const id = crypto.randomUUID()
 
-    setCanvasProjects((prev) =>
-      prev.map((project) =>
-        project.id === projectId
-          ? {
-              ...project,
-              items: [
-                ...project.items,
-                {
-                  id,
-                  type: "note" as const,
-                  x,
-                  y,
-                  width: NOTE_WIDTH,
-                  title: "Untitled note",
-                  body: "Start writing...",
-                },
-              ],
-            }
-          : project
-      )
-    )
-
-    setCanvasAutoEditNoteId(id)
-  }, [activeCanvasProject, canvasViewport])
+    createCanvasNote(projectId, x, y)
+  }, [activeCanvasProject, canvasViewport, createCanvasNote])
 
   const handleAddCanvasImageFile = useCallback(
     (file: File) => {
@@ -636,84 +800,112 @@ export default function ChronoApp() {
 
       <AccountPanel open={accountPanelOpen} onClose={() => setAccountPanelOpen(false)} />
 
-      {/* Content: sidebar + calendar side by side */}
+      {/* Content: sidebar + main area side by side */}
       <div className="flex flex-1 min-h-0">
+        <AnimatePresence initial={false} custom={sidebarShellDirection} mode="popLayout">
+          {appMode === "schedule" ? (
+            <motion.div
+              key="scheduleSidebar"
+              custom={sidebarShellDirection}
+              variants={sidebarShellSlideVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={sidebarShellSlideTransition}
+            >
+              <AppSidebar
+                collapsed={sidebarCollapsed}
+                onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+                tasks={tasks}
+                projects={canvasProjects}
+                onAddProject={handleAddProject}
+                onUpdateProject={handleCanvasProjectUpdate}
+                onDeleteProject={handleCanvasProjectDelete}
+                onToggleComplete={handleToggleComplete}
+                onUpdateTask={handleUpdateTask}
+                onDeleteTask={handleDeleteTask}
+                onQuickAddTask={handleSidebarQuickAdd}
+                onDragTaskStart={setDraggingSidebarTask}
+                onDragTaskEnd={() => setDraggingSidebarTask(null)}
+                appMode={appMode}
+                sidebarView={sidebarView}
+                onSidebarModeClick={handleSidebarModeClick}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="canvasSidebar"
+              custom={sidebarShellDirection}
+              variants={sidebarShellSlideVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={sidebarShellSlideTransition}
+            >
+              <CanvasSidebar
+                collapsed={sidebarCollapsed}
+                onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+                projects={canvasProjects}
+                projectTaskCounts={taskCountByProjectId}
+                activeProjectId={activeCanvasProject?.id ?? null}
+                onSelectProject={setActiveProjectId}
+                onAddProject={handleAddProject}
+                onUpdateProject={handleCanvasProjectUpdate}
+                onDeleteProject={handleCanvasProjectDelete}
+                appMode={appMode}
+                sidebarView={sidebarView}
+                onSidebarModeClick={handleSidebarModeClick}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {appMode === "schedule" ? (
-          <>
-            {/* Sidebar */}
-            <AppSidebar
-              collapsed={sidebarCollapsed}
-              onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-              tasks={tasks}
-              onToggleComplete={handleToggleComplete}
-              onUpdateTask={handleUpdateTask}
-              onDeleteTask={handleDeleteTask}
-              onQuickAddTask={handleSidebarQuickAdd}
-              onDragTaskStart={setDraggingSidebarTask}
-              onDragTaskEnd={() => setDraggingSidebarTask(null)}
-              appMode={appMode}
-              sidebarView={sidebarView}
-              onSidebarModeClick={handleSidebarModeClick}
+          <div className="relative flex flex-1 flex-col min-w-0 overflow-hidden rounded-tl-lg bg-calendar-bg shadow-[0_10px_15px_-3px_rgba(0,0,0,0.1),0_4px_6px_-4px_rgba(0,0,0,0.1)]">
+            <CalendarGrid
+              onDragCreate={handleDragCreate}
+              onEventMove={handleEventMove}
+              onEventResize={handleEventResize}
+              onEventDoubleClick={handleEventDoubleClick}
+              onSidebarTaskDrop={handleSidebarTaskDrop}
+              externalEvents={tasksWithProjectIdentity}
+              anchorDate={anchorDate}
+              draggingSidebarTask={draggingSidebarTask}
             />
 
-            {/* Calendar area */}
-            <div className="relative flex flex-1 flex-col min-w-0 overflow-hidden rounded-tl-lg bg-calendar-bg shadow-[0_10px_15px_-3px_rgba(0,0,0,0.1),0_4px_6px_-4px_rgba(0,0,0,0.1)]">
-              <CalendarGrid
-                onDragCreate={handleDragCreate}
-                onEventMove={handleEventMove}
-                onEventResize={handleEventResize}
-                onEventDoubleClick={handleEventDoubleClick}
-                onSidebarTaskDrop={handleSidebarTaskDrop}
-                externalEvents={tasks}
-                anchorDate={anchorDate}
-                draggingSidebarTask={draggingSidebarTask}
-              />
-
-              <CommandBar
-                externalOpen={pendingOpen}
-                onExternalOpenHandled={handleExternalOpenHandled}
-                onTaskSave={handleTaskSave}
-                editingTask={editingTask}
-                onEditSave={handleEditSave}
-                onEditDone={handleEditDone}
-                onGoToDate={handleGoToDate}
-                onGoToToday={handleGoToToday}
-                onPrevWeek={handlePrevWeek}
-                onNextWeek={handleNextWeek}
-              />
-            </div>
-          </>
-        ) : (
-          <>
-            <CanvasSidebar
-              collapsed={sidebarCollapsed}
-              onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+            <CommandBar
+              externalOpen={pendingOpen}
+              onExternalOpenHandled={handleExternalOpenHandled}
+              onTaskSave={handleTaskSave}
+              editingTask={editingTask}
+              onEditSave={handleEditSave}
+              onEditDone={handleEditDone}
+              onGoToDate={handleGoToDate}
+              onGoToToday={handleGoToToday}
+              onPrevWeek={handlePrevWeek}
+              onNextWeek={handleNextWeek}
               projects={canvasProjects}
-              activeProjectId={activeCanvasProject?.id ?? null}
-              onSelectProject={setActiveProjectId}
-              onAddProject={handleAddProject}
-              onUpdateProject={handleCanvasProjectUpdate}
-              onDeleteProject={handleCanvasProjectDelete}
-              appMode={appMode}
-              sidebarView={sidebarView}
-              onSidebarModeClick={handleSidebarModeClick}
             />
-            <div className="relative flex flex-1 flex-col min-w-0 overflow-hidden rounded-tl-lg bg-calendar-bg">
-              <CanvasBoard
-                project={activeCanvasProject}
-                onItemPositionChange={handleCanvasItemPositionChange}
-                onResizeImage={handleCanvasImageResize}
-                onUpdateNote={handleCanvasNoteUpdate}
-                autoFocusNoteId={canvasAutoEditNoteId}
-                onAutoFocusNoteHandled={() => setCanvasAutoEditNoteId(null)}
-                onViewportChange={setCanvasViewport}
-              />
-              <CanvasCommandBar
-                onAddNote={handleAddCanvasNote}
-                onAddImageFile={handleAddCanvasImageFile}
-              />
-            </div>
-          </>
+          </div>
+        ) : (
+          <div className="relative flex flex-1 flex-col min-w-0 overflow-hidden rounded-tl-lg bg-calendar-bg">
+            <CanvasBoard
+              project={activeCanvasProject}
+              onItemPositionChange={handleCanvasItemPositionChange}
+              onItemUpdate={handleCanvasItemUpdate}
+              onResizeImage={handleCanvasImageResize}
+              onUpdateNote={handleCanvasNoteUpdate}
+              autoFocusNoteId={canvasAutoEditNoteId}
+              onAutoFocusNoteHandled={() => setCanvasAutoEditNoteId(null)}
+              onViewportChange={setCanvasViewport}
+              onAddNoteAtPosition={createCanvasNote}
+              onDeleteItem={handleCanvasItemDelete}
+            />
+            <CanvasCommandBar
+              onAddNote={handleAddCanvasNote}
+              onAddImageFile={handleAddCanvasImageFile}
+            />
+          </div>
         )}
       </div>
     </div>

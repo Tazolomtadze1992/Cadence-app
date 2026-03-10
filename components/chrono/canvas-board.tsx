@@ -1,8 +1,8 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react"
-import { CornerDownLeft } from "lucide-react"
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react"
+import { CornerDownLeft, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export type CanvasItem =
@@ -12,6 +12,7 @@ export type CanvasItem =
       x: number
       y: number
       width?: number
+      zIndex?: number
       title: string
       body: string
     }
@@ -22,6 +23,7 @@ export type CanvasItem =
       y: number
       width?: number
       height?: number
+      zIndex?: number
       src: string
       alt?: string
     }
@@ -29,7 +31,6 @@ export type CanvasItem =
 export interface CanvasProject {
   id: string
   name: string
-  icon?: string
   color?: string
   items: CanvasItem[]
 }
@@ -48,6 +49,7 @@ const MIN_IMAGE_WIDTH = 160
 interface CanvasBoardProps {
   project: CanvasProject | null
   onItemPositionChange: (projectId: string, itemId: string, x: number, y: number) => void
+  onItemUpdate?: (projectId: string, itemId: string, updates: Partial<CanvasItem>) => void
   onUpdateNote?: (projectId: string, itemId: string, updates: { title: string; body: string }) => void
   onResizeImage?: (projectId: string, itemId: string, width: number, height: number) => void
   autoFocusNoteId?: string | null
@@ -58,6 +60,8 @@ interface CanvasBoardProps {
     clientWidth: number
     clientHeight: number
   }) => void
+  onAddNoteAtPosition?: (projectId: string, x: number, y: number) => void
+  onDeleteItem?: (projectId: string, itemId: string) => void
 }
 
 type DragState = {
@@ -98,11 +102,14 @@ function clampPosition(item: CanvasItem, x: number, y: number) {
 export function CanvasBoard({
   project,
   onItemPositionChange,
+  onItemUpdate,
   onUpdateNote,
   onResizeImage,
   autoFocusNoteId,
   onAutoFocusNoteHandled,
   onViewportChange,
+  onAddNoteAtPosition,
+  onDeleteItem,
 }: CanvasBoardProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const boardRef = useRef<HTMLDivElement | null>(null)
@@ -119,6 +126,14 @@ export function CanvasBoard({
   useEffect(() => {
     setEditingId(null)
   }, [project?.id])
+
+  const bringItemToFront = (itemId: string) => {
+    if (!project || !onItemUpdate) return
+    const maxZ = Math.max(0, ...project.items.map((i) => i.zIndex ?? 0))
+    const current = project.items.find((i) => i.id === itemId)?.zIndex ?? 0
+    if (current >= maxZ) return
+    onItemUpdate(project.id, itemId, { zIndex: maxZ + 1 })
+  }
 
   // Report the current scroll viewport to the parent so new notes
   // can be positioned relative to the visible area.
@@ -224,6 +239,7 @@ export function CanvasBoard({
     if (e.detail > 1) return
     e.stopPropagation()
     setSelectedId(item.id)
+    bringItemToFront(item.id)
     const board = boardRef.current
     if (!board) return
     const rect = board.getBoundingClientRect()
@@ -236,10 +252,20 @@ export function CanvasBoard({
     e.stopPropagation()
     if (!project) return
     setSelectedId(item.id)
+    bringItemToFront(item.id)
     setEditingId(item.id)
     setEditingTitle(item.title)
     setEditingBody(item.body)
   }
+  const handleDeleteItem = (itemId: string) => {
+    if (!project || !onDeleteItem) return
+    onDeleteItem(project.id, itemId)
+    if (selectedId === itemId) setSelectedId(null)
+    if (editingId === itemId) setEditingId(null)
+    if (hoveredId === itemId) setHoveredId(null)
+    if (resize?.itemId === itemId) setResize(null)
+  }
+
 
   const handleEditKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
     if (e.key === "Escape") {
@@ -250,6 +276,51 @@ export function CanvasBoard({
       finishEdit(true)
     }
   }
+
+  const handleBoardDoubleClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (!project || !onAddNoteAtPosition) return
+    const target = e.target as HTMLElement | null
+    if (target && target.closest("[data-canvas-item]")) return
+
+    const board = boardRef.current
+    if (!board) return
+    const rect = board.getBoundingClientRect()
+
+    const noteWidth = DEFAULT_NOTE_WIDTH
+    const noteHeight = DEFAULT_NOTE_HEIGHT
+
+    let x = e.clientX - rect.left - noteWidth / 2
+    let y = e.clientY - rect.top - noteHeight / 2
+
+    const maxX = Math.max(0, BOARD_WIDTH - noteWidth)
+    const maxY = Math.max(0, BOARD_HEIGHT - noteHeight)
+    if (x < 0) x = 0
+    else if (x > maxX) x = maxX
+    if (y < 0) y = 0
+    else if (y > maxY) y = maxY
+
+    onAddNoteAtPosition(project.id, x, y)
+  }
+
+  // Keyboard delete for selected item
+  useEffect(() => {
+    if (!project || !onDeleteItem) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Delete") return
+
+      const target = e.target as HTMLElement | null
+      if (!target) return
+      const tag = target.tagName
+      if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) return
+
+      if (!selectedId) return
+      handleDeleteItem(selectedId)
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [project, selectedId, onDeleteItem])
 
   // Image resize effect
   useEffect(() => {
@@ -286,6 +357,7 @@ export function CanvasBoard({
       left: item.x,
       top: item.y,
       width: item.width ?? DEFAULT_NOTE_WIDTH,
+      zIndex: item.zIndex ?? 0,
     }
 
     const isSelected = selectedId === item.id
@@ -305,7 +377,8 @@ export function CanvasBoard({
       return (
         <div
           key={item.id}
-          className="absolute cursor-grab select-none active:cursor-grabbing outline-none focus:outline-none transition-all duration-100 ease-out"
+          data-canvas-item="note"
+          className="group absolute cursor-grab select-none active:cursor-grabbing outline-none focus:outline-none transition-all duration-100 ease-out"
           style={style}
           onPointerDown={(e) => handlePointerDown(e, item)}
           onDoubleClick={(e) => handleNoteDoubleClick(e, item)}
@@ -313,10 +386,20 @@ export function CanvasBoard({
           {isEditing ? (
             <div
               className={cn(
-                "rounded-2xl border border-surface-3/40 bg-surface/95 px-4 py-3 shadow-[0_6px_16px_rgba(0,0,0,0.18)]",
-                "focus-within:border-app-faint/80 focus-within:shadow-[0_10px_26px_rgba(0,0,0,0.28)]"
+                "relative rounded-2xl border border-surface-3/40 bg-secondary px-4 py-3 shadow-[0_1px_4px_rgba(0,0,0,0.08)]",
+                "focus-within:border-app-faint/80 focus-within:shadow-[0_2px_8px_rgba(0,0,0,0.10)]"
               )}
             >
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleDeleteItem(item.id)
+                }}
+                className="pointer-events-auto absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md bg-black/30 text-red-400 opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-300"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
               <input
                 autoFocus
                 value={editingTitle}
@@ -371,10 +454,20 @@ export function CanvasBoard({
           ) : (
             <div
               className={cn(
-                "rounded-2xl border border-surface-3/40 bg-surface/95 px-4 py-3 shadow-[0_6px_16px_rgba(0,0,0,0.18)]",
-                isSelected && "border-app-faint/80 shadow-[0_8px_20px_rgba(0,0,0,0.22)]"
+                "relative rounded-2xl border border-surface-3/40 bg-secondary px-4 py-3 shadow-[0_1px_4px_rgba(0,0,0,0.08)]",
+                isSelected && "border-app-faint/80 shadow-[0_2px_6px_rgba(0,0,0,0.10)]"
               )}
             >
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleDeleteItem(item.id)
+                }}
+                className="pointer-events-auto absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md bg-black/30 text-red-400 opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-300"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
               <p className="mb-1 text-sm font-semibold text-text">{item.title}</p>
               <p className="text-xs leading-relaxed text-text-muted whitespace-pre-line">{item.body}</p>
             </div>
@@ -386,14 +479,15 @@ export function CanvasBoard({
     return (
       <div
         key={item.id}
-        className="absolute cursor-grab select-none active:cursor-grabbing outline-none focus:outline-none"
+        data-canvas-item="image"
+        className="group absolute cursor-grab select-none active:cursor-grabbing outline-none focus:outline-none"
         style={{ ...baseStyle, height: item.height ?? DEFAULT_IMAGE_HEIGHT }}
         onPointerDown={(e) => handlePointerDown(e, item)}
       >
         <div
           className={cn(
-            "relative overflow-hidden rounded-3xl border border-surface-3/40 bg-surface/80 shadow-[0_8px_22px_rgba(0,0,0,0.20)]",
-            isSelected && "border-app-faint/70 shadow-[0_10px_28px_rgba(0,0,0,0.25)]"
+            "relative overflow-hidden rounded-3xl border border-surface-3/40 bg-surface/80 shadow-[0_1px_5px_rgba(0,0,0,0.08)]",
+            isSelected && "border-app-faint/70 shadow-[0_2px_8px_rgba(0,0,0,0.10)]"
           )}
           onMouseEnter={() => setHoveredId(item.id)}
           onMouseLeave={() => {
@@ -406,6 +500,16 @@ export function CanvasBoard({
             className="h-full w-full object-cover"
             draggable={false}
           />
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleDeleteItem(item.id)
+            }}
+            className="pointer-events-auto absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md bg-black/30 text-red-400 opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-300"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
           {(() => {
             const isHovered = hoveredId === item.id
             const isResizing = resize?.itemId === item.id
@@ -458,6 +562,7 @@ export function CanvasBoard({
             setSelectedId(null)
             if (editingId) finishEdit(true)
           }}
+          onDoubleClick={handleBoardDoubleClick}
         >
           {project.items.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center px-6 text-center">
