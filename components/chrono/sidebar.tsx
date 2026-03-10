@@ -433,14 +433,20 @@ export function AppSidebar({
 
                 <div
                   ref={projectsRef}
-                  className="transition-all duration-200"
+                  className="transform transition-[max-height,opacity,transform] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
                   style={{
                     maxHeight: projectsOpen ? (projectsHeight ?? 2000) : 0,
                     opacity: projectsOpen ? 1 : 0,
-                    overflow: projectsOpen ? "visible" : "hidden",
+                    overflow: "hidden",
+                    transform: projectsOpen ? "translateY(0)" : "translateY(-4px)",
                   }}
                 >
-                  <div>
+                  <div
+                    className={cn(
+                      "transform transition-opacity transition-transform duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]",
+                      projectsOpen ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1"
+                    )}
+                  >
                     {projects.map((project) => {
                       const projectTasks = projectTaskMap[project.id] ?? []
                       const count = projectTasks.length
