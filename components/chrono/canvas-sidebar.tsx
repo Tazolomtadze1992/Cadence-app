@@ -8,6 +8,50 @@ import { cn } from "@/lib/utils"
 import type { CanvasProject } from "./canvas-board"
 import { IconTooltipButton } from "./icon-tooltip-button"
 
+export const PROJECT_COLORS = [
+  "#ef4444",
+  "#f97316",
+  "#eab308",
+  "#22c55e",
+  "#3b82f6",
+  "#6366f1",
+  "#8b5cf6",
+  "#ec4899",
+  "#14b8a6",
+  "#6b7280",
+] as const
+
+export function ProjectColorSwatchGrid({
+  value,
+  onChange,
+}: {
+  value?: string
+  onChange: (color: string) => void
+}) {
+  return (
+    <div className="grid w-fit grid-cols-5 gap-2">
+      {PROJECT_COLORS.map((color) => {
+        const isActive = color === value
+        return (
+          <button
+            key={color}
+            type="button"
+            onClick={() => onChange(color)}
+            className={cn(
+              "relative flex h-4 w-4 items-center justify-center rounded-[4px] transition-transform",
+              "focus-visible:outline-none",
+              !isActive && "hover:scale-[1.08]"
+            )}
+            style={{ backgroundColor: color }}
+          >
+            {isActive && <Check className="h-2.5 w-2.5 text-white" />}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 interface CanvasSidebarProps {
   collapsed: boolean
   onToggleSidebar: () => void
@@ -292,23 +336,12 @@ export function ProjectActionsDropdown({
     return () => document.removeEventListener("keydown", handleKey)
   }, [onClose])
 
-  const PROJECT_COLORS = [
-    "#ef4444",
-    "#f97316",
-    "#eab308",
-    "#22c55e",
-    "#3b82f6",
-    "#6366f1",
-    "#8b5cf6",
-    "#ec4899",
-    "#14b8a6",
-    "#6b7280",
-  ]
+  // uses PROJECT_COLORS + ProjectColorSwatchGrid (shared)
 
   return createPortal(
     <div
       ref={popoverRef}
-      className="fixed z-[100] w-[200px] rounded-xl border border-border/50 bg-background p-3 shadow-lg motion-reduce:transition-none will-change-transform will-change-opacity"
+      className="fixed z-[100] w-fit rounded-xl border border-border/50 bg-background p-3 shadow-lg motion-reduce:transition-none will-change-transform will-change-opacity"
       style={{
         top: computedTop,
         left: computedLeft,
@@ -318,30 +351,13 @@ export function ProjectActionsDropdown({
         transformOrigin: origin,
       }}
     >
+      <div className="flex flex-col items-start">
       {onColorChange && (
         <div className="mb-2">
-          <div className="grid grid-cols-7 gap-1">
-            {PROJECT_COLORS.map((color) => {
-              const isActive = color === currentColor
-              return (
-                <button
-                  key={color}
-                  type="button"
-                  onClick={() => onColorChange(color)}
-                  className={cn(
-                    "relative flex h-4 w-4 items-center justify-center rounded-[4px] transition-transform",
-                    "focus-visible:outline-none",
-                    !isActive && "hover:scale-[1.08]"
-                  )}
-                  style={{ backgroundColor: color }}
-                >
-                  {isActive && (
-                    <Check className="h-2.5 w-2.5 text-white" />
-                  )}
-                </button>
-              )
-            })}
-          </div>
+          <ProjectColorSwatchGrid
+            value={currentColor}
+            onChange={(c) => onColorChange(c)}
+          />
           <div className="mt-2 h-px bg-border/20" />
         </div>
       )}
@@ -372,8 +388,8 @@ export function ProjectActionsDropdown({
         <Trash2 className="h-3 w-3" />
         Delete
       </button>
+      </div>
     </div>,
     document.body
   )
 }
-

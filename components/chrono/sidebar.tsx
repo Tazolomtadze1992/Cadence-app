@@ -10,7 +10,7 @@ import type { Task } from "@/app/page"
 import type { CanvasProject } from "./canvas-board"
 import { AgendaView } from "./agenda-view"
 import { IconTooltipButton } from "./icon-tooltip-button"
-import { ProjectActionsDropdown } from "./canvas-sidebar"
+import { ProjectActionsDropdown, ProjectColorSwatchGrid, PROJECT_COLORS } from "./canvas-sidebar"
 
 const scheduledGroups = [
   { label: "Unscheduled", color: "#6b7280", icon: "calendar.svg" },
@@ -70,7 +70,7 @@ export function AppSidebar({
   appMode: import("./top-bar").AppMode
   sidebarView: "tasks" | "agenda"
   onSidebarModeClick: (view: "tasks" | "agenda" | "canvas") => void
-  onAddProject?: (name: string, icon: string) => void
+  onAddProject?: (name: string, color: string) => void
   onUpdateProject?: (projectId: string, updates: Partial<CanvasProject>) => void
   onDeleteProject?: (projectId: string) => void
 }) {
@@ -99,6 +99,38 @@ export function AppSidebar({
     projectId: string
     anchor: { top: number; left: number; right: number; bottom: number }
   } | null>(null)
+
+  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null)
+  const [renameProjectValue, setRenameProjectValue] = useState("")
+  const renameProjectInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    if (!renamingProjectId) return
+    const proj = projects.find((p) => p.id === renamingProjectId)
+    setRenameProjectValue(proj?.name ?? "")
+    requestAnimationFrame(() => {
+      renameProjectInputRef.current?.focus()
+      renameProjectInputRef.current?.select()
+    })
+  }, [renamingProjectId, projects])
+
+  const commitProjectRename = useCallback(
+    (projectId: string, value: string) => {
+      const trimmed = value.trim()
+      if (!trimmed) {
+        setRenamingProjectId(null)
+        return
+      }
+      const project = projects.find((p) => p.id === projectId)
+      if (!project || trimmed === project.name) {
+        setRenamingProjectId(null)
+        return
+      }
+      onUpdateProject?.(projectId, { name: trimmed })
+      setRenamingProjectId(null)
+    },
+    [onUpdateProject, projects]
+  )
 
   const buckets = useMemo(() => {
     const now = new Date()
@@ -451,6 +483,7 @@ export function AppSidebar({
                       const projectTasks = projectTaskMap[project.id] ?? []
                       const count = projectTasks.length
                       const isExpanded = expandedProjects[project.id] ?? false
+                      const isRenaming = renamingProjectId === project.id
                       return (
                         <div key={project.id}>
                           <ProjectItem
@@ -460,6 +493,12 @@ export function AppSidebar({
                             hasChevron
                             isExpanded={isExpanded}
                             onToggleExpand={count > 0 ? () => toggleProject(project.id) : undefined}
+                            isRenaming={isRenaming}
+                            renameValue={renameProjectValue}
+                            renameInputRef={renameProjectInputRef}
+                            onRenameChange={setRenameProjectValue}
+                            onRenameCommit={(value) => commitProjectRename(project.id, value)}
+                            onRenameCancel={() => setRenamingProjectId(null)}
                           onPlusClick={() => {
                             onQuickAddTask?.({ projectId: project.id })
                           }}
@@ -501,8 +540,8 @@ export function AppSidebar({
                   pos={addProjectPos}
                   existingNames={projects.map((p) => p.name)}
                   onClose={() => setAddProjectOpen(false)}
-                  onCreate={(name, icon) => {
-                    onAddProject(name, icon)
+                  onCreate={(name, color) => {
+                    onAddProject(name, color)
                     setAddProjectOpen(false)
                   }}
                 />
@@ -522,12 +561,8 @@ export function AppSidebar({
                       onUpdateProject?.(project.id, { color })
                     }}
                     onRename={() => {
-                      const next = window.prompt("Rename project", project.name)
-                      if (!next) return
-                      const trimmed = next.trim()
-                      if (!trimmed || trimmed === project.name) return
-                      onUpdateProject?.(project.id, { name: trimmed })
                       setProjectActionsDropdown(null)
+                      requestAnimationFrame(() => setRenamingProjectId(project.id))
                     }}
                     onDelete={() => {
                       onDeleteProject?.(project.id)
@@ -1524,6 +1559,12 @@ function ProjectItem({
   hasChevron,
   isExpanded,
   onToggleExpand,
+  isRenaming,
+  renameValue,
+  renameInputRef,
+  onRenameChange,
+  onRenameCommit,
+  onRenameCancel,
   onPlusClick,
   onMoreClick,
 }: {
@@ -1533,14 +1574,20 @@ function ProjectItem({
   hasChevron?: boolean
   isExpanded?: boolean
   onToggleExpand?: () => void
+  isRenaming?: boolean
+  renameValue?: string
+  renameInputRef?: React.RefObject<HTMLInputElement | null>
+  onRenameChange?: (value: string) => void
+  onRenameCommit?: (value: string) => void
+  onRenameCancel?: () => void
   onPlusClick?: () => void
   onMoreClick?: (anchor: { top: number; left: number; right: number; bottom: number }) => void
 }) {
   return (
     <div
       className={cn(
-        "group flex w-full items-center rounded px-2 py-1 text-sm cursor-pointer transition-colors"
-        // Removed: "hover:bg-surface-2/30"
+        "group flex w-full items-center rounded px-2 py-1 text-sm cursor-pointer transition-colors",
+        isRenaming ? "bg-transparent" : "hover:bg-surface-2/30"
       )}
       onClick={onToggleExpand}
     >
@@ -1559,11 +1606,30 @@ function ProjectItem({
             className="h-2.5 w-2.5 shrink-0 rounded-full opacity-70 transition-opacity duration-150 group-hover:opacity-100"
             style={{ backgroundColor: color ?? "#94a3b8" }}
           />
-          <span className="truncate text-text">{label}</span>
+          {isRenaming ? (
+            <input
+              ref={renameInputRef as any}
+              value={renameValue ?? ""}
+              onChange={(e) => onRenameChange?.(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  onRenameCommit?.(renameValue ?? "")
+                } else if (e.key === "Escape") {
+                  e.preventDefault()
+                  onRenameCancel?.()
+                }
+              }}
+              onBlur={() => onRenameCommit?.(renameValue ?? "")}
+              className="min-w-0 flex-1 truncate bg-transparent text-sm font-medium text-text outline-none placeholder:text-text-muted"
+            />
+          ) : (
+            <span className="truncate text-text">{label}</span>
+          )}
           {count !== undefined && <span className="shrink-0 text-[11px] text-text-faint tabular-nums">{count}</span>}
         </div>
 
-        {(onPlusClick || onMoreClick) && (
+        {!isRenaming && (onPlusClick || onMoreClick) && (
           <div className="ml-auto flex shrink-0 items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
             {onPlusClick && (
               <button
@@ -1611,10 +1677,10 @@ function AddProjectPopover({
   pos: { top: number; left: number }
   existingNames: string[]
   onClose: () => void
-  onCreate: (name: string, icon: string) => void
+  onCreate: (name: string, color: string) => void
 }) {
   const [name, setName] = useState("")
-  const [icon, setIcon] = useState<string>("folder")
+  const [color, setColor] = useState<string>(PROJECT_COLORS[0] ?? "#94a3b8")
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -1647,63 +1713,64 @@ function AddProjectPopover({
 
   const handleSave = () => {
     if (!validate(name)) return
-    onCreate(name.trim(), icon)
+    onCreate(name.trim(), color)
   }
-
-  const ICON_KEYS = ["folder", "sparkles", "fileText", "star", "book", "layout", "image"] as const
 
   return createPortal(
     <div
-      className="fixed z-[120] w-[260px] rounded-xl border border-border/50 bg-background p-3 shadow-lg"
+      className="fixed z-[120] w-fit rounded-xl border border-border/50 bg-background p-3 shadow-lg"
       style={{ top: pos.top, left: pos.left }}
     >
-      <div className="mb-2">
-        <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-text-muted">
-          Project name
-        </label>
-        <input
-          ref={inputRef}
-          value={name}
-          onChange={(e) => {
-            setName(e.target.value)
-            if (error) validate(e.target.value)
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault()
-              handleSave()
-            } else if (e.key === "Escape") {
-              e.preventDefault()
-              onClose()
-            }
-          }}
-          className="w-full rounded-md border border-border/60 bg-surface-2 px-2 py-1.5 text-xs text-text outline-none placeholder:text-text-muted"
-          placeholder="New project"
-        />
-        {error && <p className="mt-1 text-[11px] text-red-400">{error}</p>}
-      </div>
+        <div className="flex flex-col items-start">
+        <div className="mb-2 w-full">
+          <input
+            ref={inputRef}
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value)
+              if (error) validate(e.target.value)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault()
+                handleSave()
+              } else if (e.key === "Escape") {
+                e.preventDefault()
+                onClose()
+              }
+            }}
+            className="w-[180px] rounded-md border border-border/60 bg-surface-2 px-2 py-1.5 text-xs text-text outline-none placeholder:text-text-muted"
+            placeholder="New project"
+          />
+          {error && <p className="mt-1 text-[11px] text-red-400">{error}</p>}
+        </div>
 
-      <div className="flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded border border-border/50 bg-surface-2 px-3 py-1.5 text-[11px] font-medium text-text-muted transition-colors hover:bg-surface"
-        >
-          Discard
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={!!error || !name.trim()}
-          className={cn(
-            "rounded px-3 py-1.5 text-[11px] font-medium transition-all",
-            !error && name.trim()
-              ? "bg-app-accent text-app-accent-foreground shadow-sm hover:brightness-110 hover:shadow-md"
-              : "cursor-not-allowed bg-app-accent/30 text-text-faint"
-          )}
-        >
-          Save
-        </button>
+        <div className="mb-3">
+          <ProjectColorSwatchGrid value={color} onChange={setColor} />
+        </div>
+
+        <div className="flex w-full items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded border border-border/50 bg-surface-2 px-3 py-1.5 text-[11px] font-medium text-text-muted transition-colors hover:bg-surface"
+          >
+            Discard
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!!error || !name.trim()}
+            className={cn(
+              "rounded px-3 py-1.5 text-[11px] font-medium transition-all",
+              !error && name.trim()
+                ? "bg-app-accent text-app-accent-foreground shadow-sm hover:brightness-110 hover:shadow-md"
+                : "cursor-not-allowed bg-app-accent/30 text-text-faint"
+            )}
+          >
+            Save
+          </button>
+        </div>
       </div>
     </div>,
     document.body

@@ -364,8 +364,8 @@ export default function ChronoApp() {
                     x: clampedX,
                     y: clampedY,
                     width: NOTE_WIDTH,
-                    title: "Untitled note",
-                    body: "Start writing...",
+                    title: "",
+                    body: "",
                   },
                 ],
               }
@@ -702,7 +702,7 @@ export default function ChronoApp() {
     },
     [activeProjectId, tasks]
   )
-  const handleAddProject = useCallback((name?: string, _unusedIcon?: string) => {
+  const handleAddProject = useCallback((name?: string, color?: string) => {
     setCanvasProjects((prev) => {
       const id = crypto.randomUUID()
       const displayName = name?.trim() || `New project ${prev.length + 1}`
@@ -711,7 +711,7 @@ export default function ChronoApp() {
         {
           id,
           name: displayName,
-          color: "#94a3b8",
+          color: color ?? "#94a3b8",
           items: [],
         },
       ]

@@ -86,11 +86,7 @@ function ScheduledTaskRow({ task, project }: { task: Task; project: CanvasProjec
         style={{ backgroundColor: color }}
       />
       <div className="min-w-0 flex-1 pl-4 pr-3 py-2 flex flex-col gap-0.5">
-        <div className="flex items-center gap-2 min-w-0">
-          <span
-            className="h-2.5 w-2.5 shrink-0 rounded-full"
-            style={{ backgroundColor: color }}
-          />
+        <div className="min-w-0">
           <p className="truncate text-sm font-medium text-text" style={{ color }}>
             {task.title}
           </p>
@@ -351,11 +347,7 @@ export function AgendaView({ tasks = [], projects = [] }: { tasks?: Task[]; proj
                         style={{ backgroundColor: color }}
                       />
                       <div className="min-w-0 flex-1 pl-4 pr-3 py-2 flex flex-col gap-0.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span
-                            className="h-2.5 w-2.5 shrink-0 rounded-full"
-                            style={{ backgroundColor: color }}
-                          />
+                        <div className="min-w-0">
                           <p
                             className="truncate text-sm font-medium"
                             style={{ color }}

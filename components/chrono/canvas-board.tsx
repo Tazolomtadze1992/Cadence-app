@@ -468,7 +468,7 @@ export function CanvasBoard({
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
-              <p className="mb-1 text-sm font-semibold text-text">{item.title}</p>
+              <p className="mb-1 text-sm font-semibold text-text">{item.title || "Untitled note"}</p>
               <p className="text-xs leading-relaxed text-text-muted whitespace-pre-line">{item.body}</p>
             </div>
           )}
