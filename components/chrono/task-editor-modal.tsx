@@ -3,10 +3,147 @@
 import React, { useEffect, useRef, useState, useCallback } from "react"
 import { createPortal } from "react-dom"
 import { cn } from "@/lib/utils"
-import { Tag, Repeat, CornerDownLeft, Clock, ArrowRight } from "lucide-react"
+import { User, CornerDownLeft, Tag, ChevronLeft, ChevronRight } from "lucide-react"
+import {
+  DayButton,
+  getDefaultClassNames,
+  MonthCaption,
+  useDayPicker,
+} from "react-day-picker"
 import { Calendar } from "@/components/ui/calendar"
+import { Button } from "@/components/ui/button"
 import { format, startOfDay } from "date-fns"
 import type { CanvasProject } from "./canvas-board"
+import {
+  QUICK_WHEN_OPTIONS,
+  PICK_DATE_ICON,
+  formatWhenPickedDateLabel,
+  whenPickRowLabel,
+  whenTriggerIconSrc,
+} from "./schedule-when-shared"
+
+/** Single header row: month/year left, prev/next chevrons grouped on the right. */
+export function WhenDropdownMonthCaption(
+  props: React.ComponentProps<typeof MonthCaption>
+) {
+  const {
+    calendarMonth,
+    className,
+    children: _ignoredCaption,
+    displayIndex: _displayIndex,
+    ...rest
+  } = props
+  const {
+    previousMonth,
+    nextMonth,
+    goToMonth,
+    labels: { labelPrevious, labelNext },
+    classNames: rdpClassNames,
+    dayPickerProps,
+  } = useDayPicker()
+
+  const handlePrev = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!previousMonth) return
+    goToMonth(previousMonth)
+    dayPickerProps.onPrevClick?.(previousMonth)
+  }
+  const handleNext = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!nextMonth) return
+    goToMonth(nextMonth)
+    dayPickerProps.onNextClick?.(nextMonth)
+  }
+
+  return (
+    <div
+      className={cn(
+        "flex w-full items-center justify-between gap-2 pt-2 pb-2",
+        className
+      )}
+      {...rest}
+    >
+      <span
+        className="min-w-0 flex-1 truncate px-[10px] text-left text-[15px] font-semibold tracking-tight text-text"
+        role="status"
+        aria-live="polite"
+      >
+        {format(calendarMonth.date, "MMMM yyyy")}
+      </span>
+      <div className="flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          className={rdpClassNames.button_previous}
+          onClick={handlePrev}
+          disabled={!previousMonth}
+          aria-label={labelPrevious(previousMonth)}
+          aria-disabled={previousMonth ? undefined : true}
+        >
+          <ChevronLeft className="size-3.5 opacity-80" aria-hidden />
+        </button>
+        <button
+          type="button"
+          className={rdpClassNames.button_next}
+          onClick={handleNext}
+          disabled={!nextMonth}
+          aria-label={labelNext(nextMonth)}
+          aria-disabled={nextMonth ? undefined : true}
+        >
+          <ChevronRight className="size-3.5 opacity-80" aria-hidden />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** Compact inline calendar day cell: accent for today; picked date matches modal (`bg-secondary`); accent ring when today is also selected. */
+export function WhenDropdownDayButton({
+  className,
+  day,
+  modifiers,
+  ...props
+}: React.ComponentProps<typeof DayButton>) {
+  const defaultClassNames = getDefaultClassNames()
+  const ref = React.useRef<HTMLButtonElement>(null)
+  React.useEffect(() => {
+    if (modifiers.focused) ref.current?.focus()
+  }, [modifiers.focused])
+
+  const { selected, today, outside, disabled } = modifiers
+
+  return (
+    <Button
+      ref={ref}
+      variant="ghost"
+      size="icon"
+      data-day={day.date.toLocaleDateString()}
+      data-selected-single={
+        Boolean(
+          selected &&
+            !modifiers.range_start &&
+            !modifiers.range_end &&
+            !modifiers.range_middle
+        )
+      }
+      className={cn(
+        "mx-auto flex aspect-square size-auto h-[var(--cell-size)] min-h-0 min-w-0 w-[var(--cell-size)] max-w-full p-0 text-[13px] font-normal leading-none",
+        "rounded-md transition-colors",
+        disabled && "opacity-30",
+        outside && !selected && "text-text-faint opacity-50",
+        !outside && !selected && !today && "text-text hover:bg-surface-2",
+        today &&
+          !selected &&
+          "bg-app-accent text-white hover:bg-app-accent hover:text-white",
+        selected &&
+          "bg-secondary text-secondary-foreground hover:bg-secondary/90 hover:text-secondary-foreground",
+        today && selected && "ring-2 ring-inset ring-app-accent",
+        defaultClassNames.day,
+        className
+      )}
+      {...props}
+    />
+  )
+}
 
 function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16)
@@ -15,36 +152,20 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
+/** Stored on `Task`; empty string means unassigned. */
+export type TaskAssignee = "" | "tazo" | "mebo"
+
 interface TaskData {
   title: string
+  notes: string
   schedule: string
   scheduledDate?: string
   tag: string
   projectId: string
   priority: string
-  repeat: string
+  assignee: TaskAssignee
   startTimeMinutes?: number
   endTimeMinutes?: number
-}
-
-function formatTime12(minutes: number): string {
-  const h = Math.floor(minutes / 60) % 24
-  const m = minutes % 60
-  const period = h >= 12 ? "PM" : "AM"
-  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
-  return `${h12}:${m.toString().padStart(2, "0")} ${period}`
-}
-
-function formatTime12Optional(minutes: number | undefined): string {
-  return minutes != null ? formatTime12(minutes) : "No duration"
-}
-
-function formatDuration(diffMinutes: number): string {
-  const hours = Math.floor(diffMinutes / 60)
-  const mins = diffMinutes % 60
-  if (hours === 0) return `${mins}m`
-  if (mins === 0) return `${hours}h`
-  return `${hours}h ${mins}m`
 }
 
 function getDefaultStartMinutes(): number {
@@ -53,31 +174,6 @@ function getDefaultStartMinutes(): number {
   return Math.ceil(raw / 15) * 15
 }
 
-const ALL_TIME_SLOTS = Array.from({ length: 96 }, (_, i) => i * 15)
-
-function ScrollToSelected({
-  containerRef,
-}: {
-  containerRef: React.RefObject<HTMLDivElement | null>
-}) {
-  useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-    const selected = container.querySelector("[data-selected='true']") as
-      | HTMLElement
-      | null
-    selected?.scrollIntoView({ block: "center" })
-  }, [containerRef])
-  return null
-}
-
-const scheduleOptions = [
-  { value: "anytime", label: "Anytime", icon: null },
-  { value: "today", label: "Today", icon: "due-today.svg" },
-  { value: "tomorrow", label: "Tomorrow", icon: "due-tomorrow.svg" },
-  { value: "next-week", label: "Next week", icon: "due-soon.svg" },
-] as const
-
 const priorityOptions = [
   { value: "high", label: "High", icon: "high.svg" },
   { value: "medium", label: "Medium", icon: "medium.svg" },
@@ -85,18 +181,11 @@ const priorityOptions = [
   { value: "none", label: "None", icon: "none.svg" },
 ] as const
 
-const repeatOptions = [
-  { value: "none", label: "Does not repeat" },
-  { value: "daily", label: "Every day" },
-  { value: "weekdays", label: "Every weekday", detail: "Mon – Fri" },
-  { value: "weekly", label: "Every week", detail: "on Wed" },
-  { value: "biweekly", label: "Every 2 weeks", detail: "on Wed" },
-  { value: "monthly-date", label: "Every month", detail: "on the 18th" },
-  { value: "monthly-day", label: "Every month", detail: "on the 3rd Wed" },
-  { value: "monthly-last", label: "Every month", detail: "on the last Wed" },
-  { value: "yearly", label: "Every year", detail: "on Feb 18" },
-  { value: "custom", label: "Custom..." },
-] as const
+const assigneeOptions: { value: TaskAssignee; label: string }[] = [
+  { value: "", label: "Unassigned" },
+  { value: "tazo", label: "Tazo" },
+  { value: "mebo", label: "Mebo" },
+]
 
 function TriggerValue({ children }: { children: React.ReactNode }) {
   return (
@@ -134,9 +223,12 @@ export interface EditingTaskData {
   tag: string
   projectId?: string
   priority: string
-  repeat: string
+  notes: string
+  assignee: TaskAssignee
   startTimeMinutes?: number
   endTimeMinutes?: number
+  /** ISO string from task `schedulePickedDate` when schedule is picked; feeds date picker. */
+  scheduledDate?: string
 }
 
 export function TaskEditorPanel({
@@ -160,26 +252,29 @@ export function TaskEditorPanel({
     if (editingTask) {
       return {
         title: editingTask.title,
+        notes: editingTask.notes,
         schedule: editingTask.schedule,
+        scheduledDate: editingTask.scheduledDate,
         tag: editingTask.tag,
         projectId: editingTask.projectId ?? "general",
         priority: editingTask.priority,
-        repeat: editingTask.repeat,
+        assignee: editingTask.assignee,
         startTimeMinutes: editingTask.startTimeMinutes,
         endTimeMinutes: editingTask.endTimeMinutes,
       }
     }
-    const presetSchedule = initialData?.presetSchedule ?? "anytime"
+    const presetSchedule = initialData?.presetSchedule ?? "today"
     const presetScheduledDate = initialData?.presetScheduledDate
     if (initialData?.noDuration) {
       return {
         title: "",
+        notes: "",
         schedule: presetSchedule,
         scheduledDate: presetScheduledDate,
         tag: initialData?.presetTag ?? "",
         projectId: initialData?.presetProjectId ?? "general",
         priority: "none",
-        repeat: "none",
+        assignee: "",
         startTimeMinutes: undefined,
         endTimeMinutes: undefined,
       }
@@ -188,12 +283,13 @@ export function TaskEditorPanel({
     const end = initialData?.endTimeMinutes ?? Math.min(start + 60, 24 * 60 - 15)
     return {
       title: "",
+      notes: "",
       schedule: presetSchedule,
       scheduledDate: presetScheduledDate,
       tag: initialData?.presetTag ?? "",
       projectId: initialData?.presetProjectId ?? "general",
       priority: "none",
-      repeat: "none",
+      assignee: "",
       startTimeMinutes: start,
       endTimeMinutes: end,
     }
@@ -201,6 +297,8 @@ export function TaskEditorPanel({
   const dayIndex = editingTask?.dayIndex ?? initialData?.dayIndex ?? new Date().getDay()
 
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null)
+  /** When dropdown is open: main schedule list vs inline calendar (same portal, no nested popover). */
+  const [schedulePanelView, setSchedulePanelView] = useState<"options" | "calendar">("options")
   const titleRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -208,12 +306,16 @@ export function TaskEditorPanel({
     return () => cancelAnimationFrame(raf)
   }, [])
 
-  const selectedSchedule =
-    scheduleOptions.find((o) => o.value === task.schedule) || scheduleOptions[0]
+  useEffect(() => {
+    if (activeDropdown !== "schedule") {
+      setSchedulePanelView("options")
+    }
+  }, [activeDropdown])
+
   const selectedPriority =
     priorityOptions.find((o) => o.value === task.priority) || priorityOptions[3]
-  const selectedRepeat =
-    repeatOptions.find((o) => o.value === task.repeat) || repeatOptions[0]
+  const selectedAssignee =
+    assigneeOptions.find((o) => o.value === task.assignee) ?? assigneeOptions[0]
 
   const projectById = useCallback(
     (id: string) => projects.find((p) => p.id === id) ?? projects.find((p) => p.id === "general") ?? null,
@@ -222,35 +324,19 @@ export function TaskEditorPanel({
 
   const selectedProject = projectById(task.projectId)
 
-  const startScrollRef = useRef<HTMLDivElement>(null)
-  const endScrollRef = useRef<HTMLDivElement>(null)
-  const [showDatePicker, setShowDatePicker] = useState(false)
-  const datePickerRef = useRef<HTMLDivElement>(null)
-
-  // Close date picker on outside click
-  useEffect(() => {
-    if (!showDatePicker) return
-    const handleClick = (e: MouseEvent) => {
-      if (datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) {
-        setShowDatePicker(false)
-      }
-    }
-    document.addEventListener("mousedown", handleClick)
-    return () => document.removeEventListener("mousedown", handleClick)
-  }, [showDatePicker])
-
   const canSubmit = task.title.trim().length > 0
 
-  // Compute schedule display label and icon
+  // When: Today / Tomorrow / Pick a date (picked uses due-soon icon + formatted date)
   const isPickedDate = task.schedule === "picked" && task.scheduledDate
-  const scheduleDisplayLabel = isPickedDate && task.scheduledDate
-    ? format(new Date(task.scheduledDate), "MMM d")
-    : selectedSchedule.label
-  const scheduleIconSrc = isPickedDate
-    ? "/icons/calendar.svg"
-    : selectedSchedule.value === "anytime"
-      ? "/icons/calendar.svg"
-      : `/icons/${selectedSchedule.icon}`
+  const scheduleDisplayLabel =
+    task.schedule === "picked" && task.scheduledDate
+      ? formatWhenPickedDateLabel(task.scheduledDate)
+      : task.schedule === "today"
+        ? "Today"
+        : task.schedule === "tomorrow"
+          ? "Tomorrow"
+          : whenPickRowLabel(task.schedule, task.scheduledDate)
+  const scheduleIconSrc = whenTriggerIconSrc(task.schedule)
 
   return (
     <div onClick={() => setActiveDropdown(null)}>
@@ -275,6 +361,8 @@ export function TaskEditorPanel({
             />
             <input
               type="text"
+              value={task.notes}
+              onChange={(e) => setTask({ ...task, notes: e.target.value })}
               placeholder="Add notes"
               className="mt-1 w-full bg-transparent text-sm text-text-muted outline-none placeholder:text-text-faint/60"
             />
@@ -285,194 +373,125 @@ export function TaskEditorPanel({
       {/* Fields */}
       <div className="border-t border-border/50">
         {/* Schedule */}
-        <FieldRow label="Schedule">
+        <FieldRow label="When">
           <DropdownField
             id="schedule"
             activeDropdown={activeDropdown}
             setActiveDropdown={setActiveDropdown}
+            openUp
+            layoutKey={schedulePanelView}
+            panelClassName={
+              schedulePanelView === "calendar"
+                ? "min-w-[248px] max-w-[min(280px,calc(100vw-2rem))] p-0"
+                : undefined
+            }
             trigger={
               <div className="group flex items-center gap-2">
-                <IconImg
-                  src={scheduleIconSrc}
-                  className={cn(
-                    selectedSchedule.value === "anytime" && "opacity-70"
-                  )}
-                />
+                <IconImg src={scheduleIconSrc} />
                 <TriggerValue>{scheduleDisplayLabel}</TriggerValue>
               </div>
             }
           >
-            {scheduleOptions.map((option) => (
-              <button
-                key={option.value}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setTask({ ...task, schedule: option.value })
-                  setActiveDropdown(null)
-                }}
-                className="flex w-full items-center gap-2.5 rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
-              >
-                <IconImg
-                  src={
-                    option.value === "anytime"
-                      ? "/icons/calendar.svg"
-                      : `/icons/${option.icon}`
-                  }
-                  className={cn(option.value === "anytime" && "opacity-70")}
-                />
-                <span className="text-text">{option.label}</span>
-                {task.schedule === option.value && (
-                  <span className="ml-auto text-text-muted">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                      <path
-                        d="M2.5 7L5.5 10L11.5 4"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </span>
-                )}
-              </button>
-            ))}
-            <div className="relative">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setShowDatePicker(true)
-                }}
-                className="flex w-full items-center rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
-              >
-                <span className={isPickedDate ? "text-text" : "text-text-muted"}>
-                  {isPickedDate ? scheduleDisplayLabel : "Pick a date..."}
-                </span>
-                {isPickedDate && (
-                  <span className="ml-auto text-text-muted">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                      <path
-                        d="M2.5 7L5.5 10L11.5 4"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </span>
-                )}
-              </button>
-              {showDatePicker && (
-                <div
-                  ref={datePickerRef}
-                  className="absolute left-0 top-full z-50 mt-1 rounded-xl border border-border/50 bg-background p-0 shadow-lg"
-                >
-                  <Calendar
-                    mode="single"
-                    selected={task.scheduledDate ? new Date(task.scheduledDate) : undefined}
-                    onSelect={(date) => {
-                      if (date) {
-                        setTask({
-                          ...task,
-                          schedule: "picked",
-                          scheduledDate: startOfDay(date).toISOString(),
-                        })
-                        setShowDatePicker(false)
-                        setActiveDropdown(null)
-                      }
-                    }}
-                    defaultMonth={task.scheduledDate ? new Date(task.scheduledDate) : new Date()}
-                    className="rounded-xl"
-                    classNames={{
-                      months: "flex flex-col",
-                      month: "space-y-2",
-                      caption: "flex justify-center pt-1 relative items-center",
-                      caption_label: "text-sm font-medium text-text",
-                      nav: "space-x-1 flex items-center",
-                      nav_button: "h-7 w-7 bg-transparent p-0 opacity-70 hover:opacity-100 text-text-muted",
-                      nav_button_previous: "absolute left-1",
-                      nav_button_next: "absolute right-1",
-                      table: "w-full border-collapse",
-                      head_row: "flex",
-                      head_cell: "text-text-muted rounded-md w-8 font-normal text-[0.75rem]",
-                      row: "flex w-full mt-1",
-                      cell: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20",
-                      day: "h-8 w-8 p-0 font-normal text-text hover:bg-surface-2 rounded-md transition-colors",
-                      day_selected: "bg-app-accent text-white hover:bg-app-accent hover:text-white",
-                      day_today: "bg-surface-2 text-text font-medium",
-                      day_outside: "text-text-faint opacity-50",
-                      day_disabled: "text-text-faint opacity-30",
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          </DropdownField>
-        </FieldRow>
-
-        {/* Duration */}
-        <FieldRow label="Duration">
-          <div className="flex items-center gap-3 py-0.5">
-            <DropdownField
-              id="start-time"
-              activeDropdown={activeDropdown}
-              setActiveDropdown={setActiveDropdown}
-              openUp
-              trigger={
-                <div className="group flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-text-faint" />
-                  <TriggerValue>{formatTime12Optional(task.startTimeMinutes)}</TriggerValue>
-                </div>
-              }
-            >
-              <div ref={startScrollRef} className="max-h-[220px] overflow-y-auto">
-                <ScrollToSelected containerRef={startScrollRef} />
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setTask({ ...task, startTimeMinutes: undefined, endTimeMinutes: undefined })
+            {schedulePanelView === "calendar" ? (
+              <Calendar
+                mode="single"
+                hideNavigation
+                captionLayout="label"
+                selected={task.scheduledDate ? new Date(task.scheduledDate) : undefined}
+                onSelect={(date) => {
+                  if (date) {
+                    setTask({
+                      ...task,
+                      schedule: "picked",
+                      scheduledDate: startOfDay(date).toISOString(),
+                    })
+                    setSchedulePanelView("options")
                     setActiveDropdown(null)
-                  }}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2",
-                    task.startTimeMinutes == null && "bg-surface-2/50"
-                  )}
-                >
-                  <span className={task.startTimeMinutes == null ? "text-text" : "text-text-muted"}>No duration</span>
-                  {task.startTimeMinutes == null && (
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-text-muted">
-                      <path d="M2.5 7L5.5 10L11.5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                </button>
-                {ALL_TIME_SLOTS.map((slot) => {
-                  const start = task.startTimeMinutes ?? 0
-                  const currentDuration = (task.endTimeMinutes ?? start) - start
-                  const newEnd = Math.min(slot + (currentDuration > 0 ? currentDuration : 60), 24 * 60 - 15)
-                  const clampedEnd = newEnd <= slot ? slot + 15 : newEnd
-                  return (
+                  }
+                }}
+                defaultMonth={task.scheduledDate ? new Date(task.scheduledDate) : new Date()}
+                buttonVariant="ghost"
+                className="w-full max-w-[260px] rounded-lg bg-transparent p-0 [--cell-size:1.5rem]"
+                components={{
+                  MonthCaption: WhenDropdownMonthCaption,
+                  DayButton: WhenDropdownDayButton,
+                }}
+                classNames={{
+                  root: "w-full",
+                  months: "flex w-full flex-col gap-0",
+                  month:
+                    "flex w-full flex-col gap-0 px-4 pb-5 [&_[role=grid]]:w-full",
+                  month_caption: "w-full min-w-0",
+                  button_previous:
+                    "inline-flex size-7 shrink-0 items-center justify-center rounded-md p-0 text-text-muted transition-colors hover:bg-surface-2 hover:text-text",
+                  button_next:
+                    "inline-flex size-7 shrink-0 items-center justify-center rounded-md p-0 text-text-muted transition-colors hover:bg-surface-2 hover:text-text",
+                  month_grid:
+                    "mt-2 w-full min-w-0 table-fixed border-collapse",
+                  weekdays: "w-full",
+                  weekday:
+                    "h-8 w-[14.285714%] p-0 text-center align-middle text-[12px] font-normal text-text-muted select-none",
+                  weeks: "w-full",
+                  week: "w-full h-[2.25rem]",
+                  day: "w-[14.285714%] p-0 text-center align-middle text-[13px] focus-within:relative focus-within:z-20",
+                  day_button: "font-normal",
+                  today: "bg-transparent",
+                  selected: "bg-transparent",
+                  outside: "text-text-faint opacity-50",
+                  disabled: "opacity-30",
+                }}
+              />
+            ) : (
+              <>
+                {QUICK_WHEN_OPTIONS.map((option) => (
                   <button
-                    key={slot}
-                    data-selected={task.startTimeMinutes === slot}
+                    key={option.value}
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation()
                       setTask({
                         ...task,
-                        startTimeMinutes: slot,
-                        endTimeMinutes: Math.min(clampedEnd, 24 * 60 - 15),
+                        schedule: option.value,
+                        scheduledDate: undefined,
                       })
                       setActiveDropdown(null)
                     }}
-                    className="flex w-full items-center justify-between rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
+                    className="flex w-full items-center gap-2.5 rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
                   >
-                    <span className="text-text">{formatTime12(slot)}</span>
-                    {task.startTimeMinutes === slot && (
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 14 14"
-                        fill="none"
-                        className="text-text-muted"
-                      >
+                    <IconImg src={`/icons/${option.icon}`} />
+                    <span className="text-text">{option.label}</span>
+                    {task.schedule === option.value && (
+                      <span className="ml-auto text-text-muted">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                          <path
+                            d="M2.5 7L5.5 10L11.5 4"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </span>
+                    )}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setSchedulePanelView("calendar")
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
+                >
+                  <IconImg src={PICK_DATE_ICON} />
+                  <span
+                    className="flex-1 text-left text-text"
+                  >
+                    {whenPickRowLabel(task.schedule, task.scheduledDate)}
+                  </span>
+                  {isPickedDate && (
+                    <span className="ml-auto text-text-muted">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                         <path
                           d="M2.5 7L5.5 10L11.5 4"
                           stroke="currentColor"
@@ -481,80 +500,12 @@ export function TaskEditorPanel({
                           strokeLinejoin="round"
                         />
                       </svg>
-                    )}
-                  </button>
-                  )
-                })}
-              </div>
-            </DropdownField>
-
-            <ArrowRight className="h-3.5 w-3.5 shrink-0 text-text-faint" />
-
-            <DropdownField
-              id="end-time"
-              activeDropdown={activeDropdown}
-              setActiveDropdown={setActiveDropdown}
-              openUp
-              trigger={
-                <div className="group flex items-center">
-                  <TriggerValue>{task.endTimeMinutes != null ? formatTime12(task.endTimeMinutes) : "—"}</TriggerValue>
-                </div>
-              }
-            >
-              <div ref={endScrollRef} className="max-h-[220px] overflow-y-auto">
-                <ScrollToSelected containerRef={endScrollRef} />
-                {task.startTimeMinutes == null ? (
-                  <p className="px-3 py-2 text-xs text-text-faint">Pick start time first</p>
-                ) : (
-                  <>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setTask({ ...task, startTimeMinutes: undefined, endTimeMinutes: undefined })
-                        setActiveDropdown(null)
-                      }}
-                      className={cn(
-                        "flex w-full items-center justify-between rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2",
-                        task.endTimeMinutes == null && "bg-surface-2/50"
-                      )}
-                    >
-                      <span className={task.endTimeMinutes == null ? "text-text" : "text-text-muted"}>No duration</span>
-                      {task.endTimeMinutes == null && (
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-text-muted">
-                          <path d="M2.5 7L5.5 10L11.5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      )}
-                    </button>
-                    {ALL_TIME_SLOTS.filter((slot) => task.startTimeMinutes != null && slot > task.startTimeMinutes).map((slot) => {
-                      const diff = slot - (task.startTimeMinutes ?? 0)
-                      return (
-                        <button
-                          key={slot}
-                          data-selected={task.endTimeMinutes === slot}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setTask({ ...task, endTimeMinutes: slot })
-                            setActiveDropdown(null)
-                          }}
-                          className="flex w-full items-center justify-between rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
-                        >
-                          <span className="text-text">{formatTime12(slot)}</span>
-                          <span className="flex items-center gap-2">
-                            <span className="text-text-faint">({formatDuration(diff)})</span>
-                            {task.endTimeMinutes === slot && (
-                              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-text-muted">
-                                <path d="M2.5 7L5.5 10L11.5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            )}
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </>
-                )}
-              </div>
-            </DropdownField>
-          </div>
+                    </span>
+                  )}
+                </button>
+              </>
+            )}
+          </DropdownField>
         </FieldRow>
 
         {/* Project */}
@@ -570,7 +521,7 @@ export function TaskEditorPanel({
                   className="h-2.5 w-2.5 rounded-full"
                   style={{ backgroundColor: selectedProject?.color ?? "#94a3b8" }}
                 />
-                <TriggerValue>{selectedProject?.name ?? "General"}</TriggerValue>
+                <TriggerValue>{selectedProject?.name ?? "Daily Banking"}</TriggerValue>
               </div>
             }
           >
@@ -653,49 +604,45 @@ export function TaskEditorPanel({
           </DropdownField>
         </FieldRow>
 
-        {/* Repeat */}
-        <FieldRow label="Repeat" noBorder>
+        {/* Assignee */}
+        <FieldRow label="Assignee" noBorder>
           <DropdownField
-            id="repeat"
+            id="assignee"
             activeDropdown={activeDropdown}
             setActiveDropdown={setActiveDropdown}
             openUp
             trigger={
               <div className="group flex items-center gap-2">
-                <Repeat className="h-4 w-4 text-text-faint" />
-                <TriggerValue>{selectedRepeat.label}</TriggerValue>
+                <User className="h-4 w-4 shrink-0 text-text-faint" />
+                <TriggerValue>{selectedAssignee.label}</TriggerValue>
               </div>
             }
           >
-            {repeatOptions.map((option) => (
+            {assigneeOptions.map((option) => (
               <button
-                key={option.value}
+                key={option.label}
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation()
-                  setTask({ ...task, repeat: option.value })
+                  setTask({ ...task, assignee: option.value })
                   setActiveDropdown(null)
                 }}
-                className="flex w-full items-center justify-between gap-2 rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
+                className="flex w-full items-center justify-between rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
               >
                 <span className="text-text">{option.label}</span>
-                <span className="flex items-center gap-2">
-                  {"detail" in option && option.detail && (
-                    <span className="text-xs text-text-faint">{option.detail}</span>
-                  )}
-                  {task.repeat === option.value && (
-                    <span className="text-text-muted">
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                        <path
-                          d="M2.5 7L5.5 10L11.5 4"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </span>
-                  )}
-                </span>
+                {task.assignee === option.value && (
+                  <span className="text-text-muted">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <path
+                        d="M2.5 7L5.5 10L11.5 4"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </span>
+                )}
               </button>
             ))}
           </DropdownField>
@@ -763,7 +710,7 @@ function FieldRow({
 }) {
   return (
     <div className={cn("px-6 py-3", !noBorder && "border-b border-border/50")}>
-      <div className="mb-1 text-[10px] font-medium tracking-normal text-text-faint/50">
+      <div className="mb-1 text-[12px] font-medium tracking-normal text-text-faint/50">
         {label}
       </div>
       {children}
@@ -992,6 +939,8 @@ function DropdownField({
   trigger,
   children,
   openUp = false,
+  layoutKey,
+  panelClassName,
 }: {
   id: string
   activeDropdown: string | null
@@ -999,6 +948,9 @@ function DropdownField({
   trigger: React.ReactNode
   children: React.ReactNode
   openUp?: boolean
+  /** When this changes while open, recomputes position (e.g. schedule list vs inline calendar). */
+  layoutKey?: string
+  panelClassName?: string
 }) {
   const isOpen = activeDropdown === id
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -1020,7 +972,7 @@ function DropdownField({
     } else {
       setVisible(false)
     }
-  }, [isOpen, computePos])
+  }, [isOpen, computePos, layoutKey])
 
   return (
     <div>
@@ -1039,7 +991,10 @@ function DropdownField({
         pos &&
         createPortal(
           <div
-            className="fixed z-[100] min-w-[240px] rounded-xl border border-border/50 bg-background p-1 shadow-lg motion-reduce:transition-none"
+            className={cn(
+              "fixed z-[100] min-w-[240px] rounded-xl border border-border/50 bg-background p-1 shadow-lg motion-reduce:transition-none",
+              panelClassName
+            )}
             style={{
               left: pos.left,
               ...(openUp

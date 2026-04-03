@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { startOfWeek, addDays, addWeeks, startOfDay, format } from "date-fns"
+import { startOfWeek, addDays, addWeeks, startOfDay, format, parseISO } from "date-fns"
 import { AppSidebar } from "@/components/chrono/sidebar"
 import { TopBar, type AppMode } from "@/components/chrono/top-bar"
 import { AccountPanel } from "@/components/chrono/account-panel"
@@ -13,7 +13,14 @@ import { CanvasSidebar } from "../components/chrono/canvas-sidebar"
 import { CanvasCommandBar } from "@/components/chrono/canvas-command-bar"
 import { SEED_TAGS } from "@/components/chrono/task-editor-modal"
 import type { DragCreatePayload, EventMovePayload, EventResizePayload, SidebarTaskDropPayload } from "@/components/chrono/calendar-grid"
-import type { TaskEditorInitialData, TaskEditorSaveData, EditingTaskData } from "@/components/chrono/task-editor-modal"
+import type {
+  TaskEditorInitialData,
+  TaskEditorSaveData,
+  EditingTaskData,
+  TaskAssignee,
+} from "@/components/chrono/task-editor-modal"
+
+export type { TaskAssignee } from "@/components/chrono/task-editor-modal"
 
 export interface Task {
   id: string
@@ -21,26 +28,33 @@ export interface Task {
   startMinutes?: number
   endMinutes?: number
   title: string
+  /** Free-form note; shown in task editor and available for future UI. */
+  notes: string
   tag: string
   tagColor: string
   projectId?: string
   priority: string
-  repeat: string
+  /** Who should pick up the work; empty = unassigned (triage). */
+  assignee: TaskAssignee
+  /** Due-intent category: today / tomorrow / next-week / anytime / picked — not derived from calendar. */
   schedule: string
+  /** When `schedule === "picked"`, the chosen due date (yyyy-MM-dd) from the task editor date picker. */
+  schedulePickedDate?: string
   completed: boolean
-  dueDate: string // ISO date string for easy comparison
+  /** Calendar day the time block sits on (week column); updated when moving/resizing on the grid. */
+  dueDate: string
 }
 
 const INITIAL_CANVAS_PROJECTS: CanvasProject[] = [
   {
     id: "general",
-    name: "General",
+    name: "Daily Banking",
     color: "#94a3b8",
     items: [],
   },
   {
     id: "p1",
-    name: "Ambient UI",
+    name: "Credit Products & Agency Banking",
     color: "#f97316",
     items: [
       {
@@ -85,7 +99,7 @@ const INITIAL_CANVAS_PROJECTS: CanvasProject[] = [
   },
   {
     id: "p2",
-    name: "Research notes",
+    name: "Non-Credit Products",
     color: "#3b82f6",
     items: [
       {
@@ -99,7 +113,53 @@ const INITIAL_CANVAS_PROJECTS: CanvasProject[] = [
       },
     ],
   },
+  {
+    id: "p3",
+    name: "Special Products",
+    color: "#a855f7",
+    items: [],
+  },
+  {
+    id: "p4",
+    name: "Internet Bank",
+    color: "#22c55e",
+    items: [],
+  },
+  {
+    id: "p5",
+    name: "Identity Squad",
+    color: "#ec4899",
+    items: [],
+  },
+  {
+    id: "p6",
+    name: "Bill Payments",
+    color: "#eab308",
+    items: [],
+  },
 ]
+
+const SEED_PROJECT_IDS = new Set(INITIAL_CANVAS_PROJECTS.map((p) => p.id))
+
+/** Merge stored projects with the seed list: exact seed order/names, keep user canvas `items` / colors when present; append non-seed projects at the end. */
+function mergeCanvasProjectsWithSeed(projects: CanvasProject[]): CanvasProject[] {
+  const byId = new Map(projects.map((p) => [p.id, p]))
+  const ordered: CanvasProject[] = []
+  for (const seed of INITIAL_CANVAS_PROJECTS) {
+    const existing = byId.get(seed.id)
+    ordered.push({
+      ...seed,
+      ...existing,
+      name: seed.name,
+      color: existing?.color ?? seed.color,
+      items: Array.isArray(existing?.items) ? existing.items : seed.items,
+    })
+  }
+  for (const p of projects) {
+    if (!SEED_PROJECT_IDS.has(p.id)) ordered.push(p)
+  }
+  return ordered
+}
 
 const STORAGE_KEYS = {
   tasks: "cadence_tasks",
@@ -155,17 +215,20 @@ export default function ChronoApp() {
 
   const weekStart = useMemo(() => startOfWeek(anchorDate, { weekStartsOn: 0 }), [anchorDate])
 
-  const tasksWithProjectIdentity = useMemo(() => {
+  /** Incomplete tasks only: completed tasks stay in app state / sidebar Completed tab but are excluded from the grid. */
+  const calendarGridExternalEvents = useMemo(() => {
     const byId = new Map(canvasProjects.map((p) => [p.id, p] as const))
-    return tasks.map((t) => {
-      const pid = (t.projectId ?? "general").trim() || "general"
-      const project = byId.get(pid) ?? byId.get("general") ?? null
-      return {
-        ...t,
-        tagColor: project?.color ?? t.tagColor ?? "#94a3b8",
-        projectName: project?.name,
-      }
-    })
+    return tasks
+      .filter((t) => !t.completed)
+      .map((t) => {
+        const pid = (t.projectId ?? "general").trim() || "general"
+        const project = byId.get(pid) ?? byId.get("general") ?? null
+        return {
+          ...t,
+          tagColor: project?.color ?? t.tagColor ?? "#94a3b8",
+          projectName: project?.name,
+        }
+      })
   }, [canvasProjects, tasks])
 
   const taskCountByProjectId = useMemo(() => {
@@ -186,7 +249,7 @@ export default function ChronoApp() {
       return [
         {
           id: "general",
-          name: "General",
+          name: "Daily Banking",
           icon: "folder",
           color: "#94a3b8",
           items: [],
@@ -210,10 +273,12 @@ export default function ChronoApp() {
     const storedProjects = readJsonArray<CanvasProject>(STORAGE_KEYS.canvasProjects) ?? null
 
     // Start from stored values if present, otherwise from seeds, and ensure a default color.
-    let nextProjects = ensureGeneralProject(storedProjects ?? INITIAL_CANVAS_PROJECTS).map((p) => ({
-      ...p,
-      color: p.color ?? "#94a3b8",
-    })) as CanvasProject[]
+    let nextProjects = mergeCanvasProjectsWithSeed(
+      ensureGeneralProject(storedProjects ?? INITIAL_CANVAS_PROJECTS).map((p) => ({
+        ...p,
+        color: p.color ?? "#94a3b8",
+      })) as CanvasProject[]
+    )
     let nextTasks = (storedTasks ?? []) as Task[]
 
     // Migrate legacy tag-based tasks → projectId
@@ -239,12 +304,24 @@ export default function ChronoApp() {
       }
 
       nextTasks = nextTasks.map((t) => {
-        if (t.projectId) return t
-        const tag = (t.tag ?? "").trim()
-        if (!tag) return { ...t, projectId: "general" }
+        const assignee: TaskAssignee =
+          t.assignee === "tazo" || t.assignee === "mebo" ? t.assignee : ""
+        const withMeta = {
+          ...t,
+          notes: typeof t.notes === "string" ? t.notes : "",
+          assignee,
+          schedulePickedDate:
+            typeof (t as Task).schedulePickedDate === "string"
+              ? (t as Task).schedulePickedDate
+              : undefined,
+        }
+        const { repeat: _dropRepeat, ...rest } = withMeta as typeof withMeta & { repeat?: string }
+        if (rest.projectId) return rest as Task
+        const tag = (rest.tag ?? "").trim()
+        if (!tag) return { ...rest, projectId: "general" } as Task
         const match = nameToProjectId.get(tag.toLowerCase())
-        const projectId = match ?? maybeCreateProjectFromTag(tag, t.tagColor)
-        return { ...t, projectId }
+        const projectId = match ?? maybeCreateProjectFromTag(tag, rest.tagColor)
+        return { ...rest, projectId } as Task
       })
     }
 
@@ -289,7 +366,12 @@ export default function ChronoApp() {
   }, [])
 
   const handleSidebarQuickAdd = useCallback(
-    (preset: { tag?: string; date?: Date; schedule?: string; projectId?: string }) => {
+    (preset: {
+      tag?: string
+      date?: Date
+      schedule?: string
+      projectId?: string
+    }) => {
       if (preset.date) {
         const d = startOfDay(preset.date)
         setAnchorDate(d)
@@ -456,7 +538,6 @@ export default function ChronoApp() {
                 startMinutes: payload.startMinutes,
                 endMinutes: payload.endMinutes,
                 dueDate,
-                schedule: "picked",
               }
             : t
         )
@@ -483,7 +564,6 @@ export default function ChronoApp() {
                 startMinutes: payload.startMinutes,
                 endMinutes: payload.endMinutes,
                 dueDate,
-                schedule: "picked",
               }
             : t
         )
@@ -523,9 +603,13 @@ export default function ChronoApp() {
       tag: t.tag,
       projectId: t.projectId,
       priority: t.priority,
-      repeat: t.repeat,
+      notes: t.notes ?? "",
+      assignee: t.assignee === "tazo" || t.assignee === "mebo" ? t.assignee : "",
       startTimeMinutes: t.startMinutes,
       endTimeMinutes: t.endMinutes,
+      scheduledDate: t.schedulePickedDate
+        ? startOfDay(parseISO(t.schedulePickedDate)).toISOString()
+        : undefined,
     })
   }, [tasks])
 
@@ -549,8 +633,13 @@ export default function ChronoApp() {
               tag: project?.name ?? t.tag,
               tagColor: project?.color ?? t.tagColor,
               priority: data.priority,
-              repeat: data.repeat,
+              notes: data.notes,
+              assignee: data.assignee,
               schedule: data.schedule,
+              schedulePickedDate:
+                data.schedule === "picked" && data.scheduledDate
+                  ? format(startOfDay(new Date(data.scheduledDate)), "yyyy-MM-dd")
+                  : undefined,
               dueDate,
             }
           : t
@@ -578,11 +667,16 @@ export default function ChronoApp() {
         endMinutes: data.endTimeMinutes,
         title: data.title || "New Task",
         projectId: data.projectId,
-        tag: project?.name ?? "General",
+        tag: project?.name ?? "Daily Banking",
         tagColor: project?.color ?? "#94a3b8",
         priority: data.priority,
-        repeat: data.repeat,
+        notes: data.notes ?? "",
+        assignee: data.assignee ?? "",
         schedule: data.schedule,
+        schedulePickedDate:
+          data.schedule === "picked" && data.scheduledDate
+            ? format(startOfDay(new Date(data.scheduledDate)), "yyyy-MM-dd")
+            : undefined,
         completed: false,
         dueDate,
       },
@@ -867,8 +961,9 @@ export default function ChronoApp() {
               onEventMove={handleEventMove}
               onEventResize={handleEventResize}
               onEventDoubleClick={handleEventDoubleClick}
+              onToggleComplete={handleToggleComplete}
               onSidebarTaskDrop={handleSidebarTaskDrop}
-              externalEvents={tasksWithProjectIdentity}
+              externalEvents={calendarGridExternalEvents}
               anchorDate={anchorDate}
               draggingSidebarTask={draggingSidebarTask}
             />

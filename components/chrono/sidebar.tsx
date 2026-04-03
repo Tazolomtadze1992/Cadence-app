@@ -2,23 +2,51 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo, type ComponentType, type ReactNode, type DragEvent } from "react"
 import { createPortal } from "react-dom"
-import { format, isToday as isTodayFn, isTomorrow as isTomorrowFn, isBefore, startOfDay, addDays } from "date-fns"
+import { format, startOfDay, addDays } from "date-fns"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
-import { ChevronRight, Plus, Pencil, Trash2, Check, MoreHorizontal, Repeat, Tag, Calendar } from "lucide-react"
+import {
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Pencil,
+  Trash2,
+  Check,
+  MoreHorizontal,
+  Tag,
+  Calendar as CalendarIcon,
+  User,
+} from "lucide-react"
+import { Calendar } from "@/components/ui/calendar"
+import { WhenDropdownMonthCaption, WhenDropdownDayButton } from "@/components/chrono/task-editor-modal"
+import {
+  QUICK_WHEN_OPTIONS,
+  PICK_DATE_ICON,
+  whenPickRowLabel,
+} from "@/components/chrono/schedule-when-shared"
 import type { Task } from "@/app/page"
+import { formatAssigneeLabel, isAssignedDesignee } from "@/components/chrono/assignee-utils"
 import type { CanvasProject } from "./canvas-board"
 import { AgendaView } from "./agenda-view"
 import { IconTooltipButton } from "./icon-tooltip-button"
 import { ProjectActionsDropdown, ProjectColorSwatchGrid, PROJECT_COLORS } from "./canvas-sidebar"
+import { bucketForSchedulePickedDate } from "./picked-due-bucket"
 
 const scheduledGroups = [
-  { label: "Unscheduled", color: "#6b7280", icon: "calendar.svg" },
   { label: "Due today", color: "#f97316", icon: "due-today.svg" },
   { label: "Due tomorrow", color: "#3b82f6", icon: "due-tomorrow.svg" },
   { label: "Due Soon", color: "#a855f7", icon: "due-soon.svg" },
   { label: "Overdue", color: "#ef4444", icon: "overdue.svg" },
 ]
+
+/** Picked due date in the past → Overdue bucket; used for drag eligibility. */
+function taskBelongsToOverdueBucket(t: Task): boolean {
+  if (t.completed) return false
+  if (t.schedule === "picked" && t.schedulePickedDate) {
+    return bucketForSchedulePickedDate(t.schedulePickedDate) === "overdue"
+  }
+  return false
+}
 
 const EXTENDED_COLORS = [
   "#ef4444",
@@ -64,7 +92,12 @@ export function AppSidebar({
   onToggleComplete?: (id: string) => void
   onUpdateTask?: (id: string, updates: Partial<Task>) => void
   onDeleteTask?: (id: string) => void
-  onQuickAddTask?: (preset: { tag?: string; date?: Date; schedule?: string; projectId?: string }) => void
+  onQuickAddTask?: (preset: {
+    tag?: string
+    date?: Date
+    schedule?: string
+    projectId?: string
+  }) => void
   onDragTaskStart?: (task: Task) => void
   onDragTaskEnd?: () => void
   appMode: import("./top-bar").AppMode
@@ -75,6 +108,8 @@ export function AppSidebar({
   onDeleteProject?: (projectId: string) => void
 }) {
   const [slideDirection, setSlideDirection] = useState<1 | -1>(1)
+  /** All ↔ Completed: 1 = forward (Completed enters from right), -1 = back (All enters from left). */
+  const [tabSlideDirection, setTabSlideDirection] = useState<1 | -1>(1)
   const [activeTab, setActiveTab] = useState<"all" | "completed">("all")
   const [projectsOpen, setProjectsOpen] = useState(true)
   const projectsRef = useRef<HTMLDivElement>(null)
@@ -133,12 +168,8 @@ export function AppSidebar({
   )
 
   const buckets = useMemo(() => {
-    const now = new Date()
-    const today = startOfDay(now)
-    const tomorrow = addDays(today, 1)
-    const soonEnd = addDays(today, 7)
+    const today = startOfDay(new Date())
 
-    const unscheduled: Task[] = []
     const overdue: Task[] = []
     const dueToday: Task[] = []
     const dueTomorrow: Task[] = []
@@ -146,46 +177,104 @@ export function AppSidebar({
 
     for (const t of tasks) {
       if (t.completed) continue
-      const hasTime = t.startMinutes != null && t.endMinutes != null
-      if (!hasTime) {
-        unscheduled.push(t)
+
+      // Overdue: explicit picked date before today (due-intent only)
+      if (taskBelongsToOverdueBucket(t)) {
+        overdue.push(t)
         continue
       }
-      const d = new Date(t.dueDate + "T00:00:00")
-      if (isBefore(d, today)) overdue.push(t)
-      else if (isTodayFn(d)) dueToday.push(t)
-      else if (isTomorrowFn(d)) dueTomorrow.push(t)
-      else if (isBefore(d, soonEnd)) dueSoon.push(t)
+
+      const hasTime = t.startMinutes != null && t.endMinutes != null
+
+      if (!hasTime) {
+        const s = t.schedule
+        if (s === "anytime" || !s) {
+          // No sidebar group for unscheduled — task stays in app state only.
+          continue
+        } else if (s === "today") {
+          dueToday.push(t)
+        } else if (s === "tomorrow") {
+          dueTomorrow.push(t)
+        } else if (s === "next-week") {
+          dueSoon.push(t)
+        } else if (s === "picked" && t.schedulePickedDate) {
+          switch (bucketForSchedulePickedDate(t.schedulePickedDate)) {
+            case "overdue":
+              overdue.push(t)
+              break
+            case "dueToday":
+              dueToday.push(t)
+              break
+            case "dueTomorrow":
+              dueTomorrow.push(t)
+              break
+            case "dueSoon":
+              dueSoon.push(t)
+              break
+          }
+        } else {
+          dueSoon.push(t)
+        }
+        continue
+      }
+
+      const s = t.schedule
+      if (s === "today") {
+        dueToday.push(t)
+        continue
+      }
+      if (s === "tomorrow") {
+        dueTomorrow.push(t)
+        continue
+      }
+      if (s === "next-week" || s === "anytime") {
+        dueSoon.push(t)
+        continue
+      }
+      if (s === "picked") {
+        const pd = t.schedulePickedDate
+        if (pd) {
+          switch (bucketForSchedulePickedDate(pd)) {
+            case "overdue":
+              overdue.push(t)
+              break
+            case "dueToday":
+              dueToday.push(t)
+              break
+            case "dueTomorrow":
+              dueTomorrow.push(t)
+              break
+            case "dueSoon":
+              dueSoon.push(t)
+              break
+          }
+        } else {
+          dueSoon.push(t)
+        }
+        continue
+      }
+      dueSoon.push(t)
     }
 
-    return { unscheduled, overdue, dueToday, dueTomorrow, dueSoon }
+    return { overdue, dueToday, dueTomorrow, dueSoon }
   }, [tasks])
 
   const todayStart = useMemo(() => startOfDay(new Date()), [])
   const handleQuickAddFromScheduledGroup = useCallback(
     (label: string) => {
-      // Map sidebar sections to a concrete date + editor schedule preset.
-      if (label === "Unscheduled") {
-        onQuickAddTask?.({ schedule: "anytime" })
-      } else if (label === "Due today") {
+      // When / due-intent presets for the task editor (not calendar placement).
+      if (label === "Due today") {
         onQuickAddTask?.({ date: todayStart, schedule: "today" })
       } else if (label === "Due tomorrow") {
         onQuickAddTask?.({ date: addDays(todayStart, 1), schedule: "tomorrow" })
       } else if (label === "Due Soon") {
-        // Pick a reasonable default within the "soon" window.
-        const d = addDays(todayStart, 3)
-        onQuickAddTask?.({ date: d, schedule: "picked" })
-      } else if (label === "Overdue") {
-        // No "+" currently shown for Overdue, but keep mapping sane.
-        const d = addDays(todayStart, -1)
-        onQuickAddTask?.({ date: d, schedule: "picked" })
+        onQuickAddTask?.({ schedule: "next-week" })
       }
     },
     [onQuickAddTask, todayStart]
   )
 
   const bucketMap: Record<string, Task[]> = {
-    Unscheduled: buckets.unscheduled,
     Overdue: buckets.overdue,
     "Due today": buckets.dueToday,
     "Due tomorrow": buckets.dueTomorrow,
@@ -301,14 +390,6 @@ export function AppSidebar({
     }),
   }
 
-  // Agenda view uses a simpler fade variant so it plays nicer
-  // with the sidebar width animation on expand/collapse.
-  const agendaVariants = {
-    enter: { opacity: 0, x: 0 },
-    center: { opacity: 1, x: 0 },
-    exit: { opacity: 0, x: 0 },
-  }
-
   const slideTransition = {
     duration: 0.2,
     ease: [0.2, 0.8, 0.2, 1] as const,
@@ -337,21 +418,29 @@ export function AppSidebar({
               className="absolute inset-0 flex flex-col overflow-hidden"
             >
               {/* All/Completed tabs */}
-              <div className="px-3 pb-2">
-                <div className="flex rounded bg-surface-2 p-0.5">
+              <div className="shrink-0 px-3 pb-2">
+                <div className="flex rounded-md bg-surface-2 p-0.5">
                   <button
-                    onClick={() => setActiveTab("all")}
+                    onClick={() => {
+                      if (activeTab === "all") return
+                      setTabSlideDirection(-1)
+                      setActiveTab("all")
+                    }}
                     className={cn(
-                      "flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors",
+                      "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                       activeTab === "all" ? "bg-surface text-text shadow-sm" : "text-text-muted hover:text-text"
                     )}
                   >
                     All
                   </button>
                   <button
-                    onClick={() => setActiveTab("completed")}
+                    onClick={() => {
+                      if (activeTab === "completed") return
+                      setTabSlideDirection(1)
+                      setActiveTab("completed")
+                    }}
                     className={cn(
-                      "flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors",
+                      "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                       activeTab === "completed" ? "bg-surface text-text shadow-sm" : "text-text-muted hover:text-text"
                     )}
                   >
@@ -360,35 +449,19 @@ export function AppSidebar({
                 </div>
               </div>
 
-              {activeTab === "completed" ? (
-                completedTasks.length === 0 ? (
-                  <CompletedEmptyState />
-                ) : (
-                  <div className="flex flex-1 flex-col overflow-y-auto px-1.5 py-3">
-                    <div className="space-y-0.5">
-                      {completedTasks.map((t) => (
-                        <TaskRow
-                          key={t.id}
-                          task={t}
-                          onToggleComplete={() => onToggleComplete?.(t.id)}
-                          onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
-                          isDraggable={t.startMinutes == null || t.endMinutes == null}
-                          onDragStart={() => {
-                            setDraggingTaskId(t.id)
-                            onDragTaskStart?.(t)
-                          }}
-                          onDragEnd={() => {
-                            setDraggingTaskId(null)
-                            onDragTaskEnd?.()
-                          }}
-                          isDragging={draggingTaskId === t.id}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )
-              ) : (
-                <>
+              <div className="relative min-h-0 flex-1 overflow-hidden">
+                <AnimatePresence initial={false} custom={tabSlideDirection} mode="popLayout">
+                  {activeTab === "all" ? (
+                    <motion.div
+                      key="sidebar-tab-all"
+                      custom={tabSlideDirection}
+                      variants={slideVariants}
+                      initial="enter"
+                      animate="center"
+                      exit="exit"
+                      transition={slideTransition}
+                      className="absolute inset-0 flex min-h-0 flex-col overflow-hidden"
+                    >
               {/* Scheduled groups */}
               <div className="px-1.5 py-3">
                 {scheduledGroups.map((group) => {
@@ -416,7 +489,7 @@ export function AppSidebar({
                               task={t}
                               onToggleComplete={() => onToggleComplete?.(t.id)}
                               onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
-                              isDraggable={t.startMinutes == null || t.endMinutes == null}
+                              isDraggable={group.label !== "Overdue"}
                               onDragStart={() => {
                                 setDraggingTaskId(t.id)
                                 onDragTaskStart?.(t)
@@ -514,7 +587,7 @@ export function AppSidebar({
                                   task={t}
                                   onToggleComplete={() => onToggleComplete?.(t.id)}
                                   onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
-                                  isDraggable={t.startMinutes == null || t.endMinutes == null}
+                                  isDraggable={!taskBelongsToOverdueBucket(t)}
                                   onDragStart={() => {
                                     setDraggingTaskId(t.id)
                                     onDragTaskStart?.(t)
@@ -571,8 +644,48 @@ export function AppSidebar({
                   />
                 )
               })()}
-                </>
-              )}
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="sidebar-tab-completed"
+                      custom={tabSlideDirection}
+                      variants={slideVariants}
+                      initial="enter"
+                      animate="center"
+                      exit="exit"
+                      transition={slideTransition}
+                      className="absolute inset-0 flex min-h-0 flex-col overflow-hidden"
+                    >
+                      {completedTasks.length === 0 ? (
+                        <CompletedEmptyState />
+                      ) : (
+                        <div className="flex flex-1 flex-col overflow-y-auto px-1.5 py-3">
+                          <div className="space-y-0.5">
+                            {completedTasks.map((t) => (
+                              <TaskRow
+                                key={t.id}
+                                task={t}
+                                onToggleComplete={() => onToggleComplete?.(t.id)}
+                                onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
+                                isDraggable={false}
+                                onDragStart={() => {
+                                  setDraggingTaskId(t.id)
+                                  onDragTaskStart?.(t)
+                                }}
+                                onDragEnd={() => {
+                                  setDraggingTaskId(null)
+                                  onDragTaskEnd?.()
+                                }}
+                                isDragging={draggingTaskId === t.id}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
 
               {taskDropdown && activeDropdownTask && (
                 <TaskActionsDropdown
@@ -590,7 +703,7 @@ export function AppSidebar({
             <motion.div
               key="agenda"
               custom={slideDirection}
-              variants={agendaVariants}
+              variants={slideVariants}
               initial="enter"
               animate="center"
               exit="exit"
@@ -891,34 +1004,24 @@ const PRIORITY_OPTIONS = [
   { value: "none", label: "None" },
 ]
 
-const SCHEDULE_OPTIONS = [
-  { value: "anytime", label: "Anytime", icon: "settings" },
-  { value: "today", label: "Today", color: "#f97316" },
-  { value: "tomorrow", label: "Tomorrow", color: "#3b82f6" },
-]
-
-const REPEAT_LABELS: Record<string, string> = {
-  daily: "Daily",
-  weekdays: "Every weekday",
-  weekly: "Weekly",
-  monthly: "Monthly",
-}
-
-// ─── Submenu Component ──────────────────────────────────────────��────
+// ─── Submenu Component ───────────────────────────────────────────────
 function DropdownSubmenu({
   anchor,
   children,
   onMouseEnter,
   onMouseLeave,
   submenuRef,
+  submenuWidth = 180,
 }: {
   anchor: { top: number; right: number; left: number }
   children: React.ReactNode
   onMouseEnter?: () => void
   onMouseLeave?: () => void
   submenuRef?: React.RefObject<HTMLDivElement | null>
+  /** Width in px; wider when showing inline calendar. */
+  submenuWidth?: number
 }) {
-  const SUBMENU_WIDTH = 180
+  const SUBMENU_WIDTH = submenuWidth
   const GAP = 6
   const fitsRight = anchor.right + GAP + SUBMENU_WIDTH <= window.innerWidth - 8
   const left = fitsRight ? anchor.right + GAP : anchor.left - SUBMENU_WIDTH - GAP
@@ -932,10 +1035,11 @@ function DropdownSubmenu({
   return createPortal(
     <div
       ref={submenuRef}
-      className="fixed z-[102] w-[180px] rounded-xl border border-border/50 bg-background py-1.5 shadow-lg will-change-transform will-change-opacity"
+      className="fixed z-[102] rounded-xl border border-border/50 bg-background py-1.5 shadow-lg will-change-transform will-change-opacity"
       style={{
         top,
         left,
+        width: SUBMENU_WIDTH,
         opacity: visible ? 1 : 0,
         transform: visible ? "translateY(0) scale(1)" : "translateY(-2px) scale(0.99)",
         transition: "opacity 140ms cubic-bezier(0.2,0.8,0.2,1), transform 140ms cubic-bezier(0.2,0.8,0.2,1)",
@@ -1006,6 +1110,7 @@ function TaskActionsDropdown({
   const submenuRef = useRef<HTMLDivElement>(null)
   const [openSub, setOpenSub] = useState<"priority" | "project" | "schedule" | null>(null)
   const [subAnchor, setSubAnchor] = useState<{ top: number; right: number; left: number } | null>(null)
+  const [scheduleMenuView, setScheduleMenuView] = useState<"options" | "calendar">("options")
 
   const fitsRight = anchor.right + GAP + DROPDOWN_WIDTH <= window.innerWidth - GAP
   const computedLeft = fitsRight ? anchor.right + GAP : anchor.left - DROPDOWN_WIDTH - GAP
@@ -1096,6 +1201,10 @@ function TaskActionsDropdown({
     }
   }, [])
 
+  useEffect(() => {
+    if (openSub !== "schedule") setScheduleMenuView("options")
+  }, [openSub])
+
   const rowClass =
     "flex w-full items-center gap-2.5 px-3 py-1.5 text-xs text-text transition-colors duration-150 hover:bg-surface-2"
 
@@ -1158,7 +1267,7 @@ function TaskActionsDropdown({
         onMouseEnter={(e) => handleSubHover("schedule", e)}
         onClick={(e) => handleSubHover("schedule", e)}
       >
-        <Calendar className="h-3.5 w-3.5 text-text-muted" />
+        <CalendarIcon className="h-3.5 w-3.5 text-text-muted" />
         <span className="flex-1 text-left">Schedule</span>
         <ChevronRight className="h-3 w-3 text-text-faint" />
       </button>
@@ -1232,44 +1341,111 @@ function TaskActionsDropdown({
           onMouseEnter={handleContainerEnter}
           onMouseLeave={handleContainerLeave}
           submenuRef={submenuRef}
+          submenuWidth={scheduleMenuView === "calendar" ? 280 : 180}
         >
-          {SCHEDULE_OPTIONS.map((opt) => {
-            const isSelected =
-              opt.value === "today"
-                ? isTodayFn(new Date(task.dueDate + "T00:00:00"))
-                : opt.value === "tomorrow"
-                  ? isTomorrowFn(new Date(task.dueDate + "T00:00:00"))
-                  : task.schedule === "anytime"
-
-            return (
-              <SubmenuRow
-                key={opt.value}
-                label={opt.label}
-                color={opt.color}
-                isSelected={isSelected}
-                onClick={() => {
-                  if (opt.value === "today") {
-                    const today = startOfDay(new Date())
-                    onUpdateTask(task.id, { dueDate: format(today, "yyyy-MM-dd"), schedule: "today" })
-                  } else if (opt.value === "tomorrow") {
-                    const tomorrow = addDays(startOfDay(new Date()), 1)
-                    onUpdateTask(task.id, { dueDate: format(tomorrow, "yyyy-MM-dd"), schedule: "tomorrow" })
-                  } else {
-                    onUpdateTask(task.id, { schedule: "anytime" })
+          {scheduleMenuView === "options" ? (
+            <>
+              {QUICK_WHEN_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-text transition-colors hover:bg-surface-2"
+                  onClick={() => {
+                    onUpdateTask(task.id, {
+                      schedule: opt.value,
+                      schedulePickedDate: undefined,
+                    })
+                    closeWithAnimation()
+                  }}
+                >
+                  <img src={`/icons/${opt.icon}`} alt="" className="h-4 w-4 shrink-0" />
+                  <span className="flex-1 text-left">{opt.label}</span>
+                  {task.schedule === opt.value && (
+                    <Check className="h-3 w-3 shrink-0 text-text-muted" />
+                  )}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-text transition-colors hover:bg-surface-2"
+                onClick={() => setScheduleMenuView("calendar")}
+              >
+                <img src={PICK_DATE_ICON} alt="" className="h-4 w-4 shrink-0" />
+                <span className="flex-1 text-left text-text">
+                  {whenPickRowLabel(task.schedule, task.schedulePickedDate)}
+                </span>
+                {task.schedule === "picked" && task.schedulePickedDate ? (
+                  <Check className="h-3 w-3 shrink-0 text-text-muted" />
+                ) : null}
+              </button>
+            </>
+          ) : (
+            <div className="px-1 pb-1 pt-0.5">
+              <button
+                type="button"
+                className="mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+                onClick={() => setScheduleMenuView("options")}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Back
+              </button>
+              <Calendar
+                mode="single"
+                hideNavigation
+                captionLayout="label"
+                selected={
+                  task.schedulePickedDate
+                    ? new Date(`${task.schedulePickedDate}T12:00:00`)
+                    : undefined
+                }
+                onSelect={(date) => {
+                  if (date) {
+                    onUpdateTask(task.id, {
+                      schedule: "picked",
+                      schedulePickedDate: format(startOfDay(date), "yyyy-MM-dd"),
+                    })
+                    setScheduleMenuView("options")
+                    closeWithAnimation()
                   }
-                  closeWithAnimation()
+                }}
+                defaultMonth={
+                  task.schedulePickedDate
+                    ? new Date(`${task.schedulePickedDate}T12:00:00`)
+                    : new Date()
+                }
+                buttonVariant="ghost"
+                className="w-full max-w-[260px] rounded-lg bg-transparent p-0 [--cell-size:1.5rem]"
+                components={{
+                  MonthCaption: WhenDropdownMonthCaption,
+                  DayButton: WhenDropdownDayButton,
+                }}
+                classNames={{
+                  root: "w-full",
+                  months: "flex w-full flex-col gap-0",
+                  month:
+                    "flex w-full flex-col gap-0 px-4 pb-5 [&_[role=grid]]:w-full",
+                  month_caption: "w-full min-w-0",
+                  button_previous:
+                    "inline-flex size-7 shrink-0 items-center justify-center rounded-md p-0 text-text-muted transition-colors hover:bg-surface-2 hover:text-text",
+                  button_next:
+                    "inline-flex size-7 shrink-0 items-center justify-center rounded-md p-0 text-text-muted transition-colors hover:bg-surface-2 hover:text-text",
+                  month_grid:
+                    "mt-2 w-full min-w-0 table-fixed border-collapse",
+                  weekdays: "w-full",
+                  weekday:
+                    "h-8 w-[14.285714%] p-0 text-center align-middle text-[12px] font-normal text-text-muted select-none",
+                  weeks: "w-full",
+                  week: "w-full h-[2.25rem]",
+                  day: "w-[14.285714%] p-0 text-center align-middle text-[13px] focus-within:relative focus-within:z-20",
+                  day_button: "font-normal",
+                  today: "bg-transparent",
+                  selected: "bg-transparent",
+                  outside: "text-text-faint opacity-50",
+                  disabled: "opacity-30",
                 }}
               />
-            )
-          })}
-          <div className="mx-2 my-1 h-px bg-border/20" />
-          <button
-            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-xs text-text transition-colors duration-150 hover:bg-surface-2"
-            onClick={() => closeWithAnimation()}
-          >
-            <span className="flex-1 text-left text-text-muted">Pick a date...</span>
-            <ChevronRight className="h-3 w-3 text-text-faint" />
-          </button>
+            </div>
+          )}
         </DropdownSubmenu>
       )}
     </div>,
@@ -1393,7 +1569,7 @@ function TaskRow({
         <div className="flex items-center gap-1">
           {dueDateFormatted && (
             <div className="flex items-center gap-1 rounded bg-surface-2/60 px-1.5 py-0.5">
-              <Calendar className="h-3 w-3 text-[#f97316]" />
+              <CalendarIcon className="h-3 w-3 text-[#f97316]" />
               <span className="text-[10px] text-text-faint">{dueDateFormatted}</span>
             </div>
           )}
@@ -1410,20 +1586,20 @@ function TaskRow({
             </div>
           )}
 
-          {task.repeat && task.repeat !== "none" && (
-            <div className="group/chip relative flex items-center justify-center rounded bg-surface-2/60 p-1">
-              <Repeat className="h-3 w-3 text-[#3b82f6]" />
-              <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text opacity-0 shadow-md transition-opacity duration-150 group-hover/chip:opacity-100">
-                {REPEAT_LABELS[task.repeat] ?? task.repeat}
-              </span>
-            </div>
-          )}
-
           {task.priority && task.priority !== "none" && (
             <div className="group/chip relative flex items-center justify-center rounded bg-surface-2/60 p-1">
               <PriorityIcon priority={task.priority} className="h-3 w-3" />
               <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text capitalize opacity-0 shadow-md transition-opacity duration-150 group-hover/chip:opacity-100">
                 {task.priority}
+              </span>
+            </div>
+          )}
+
+          {isAssignedDesignee(task.assignee) && (
+            <div className="group/chip relative flex items-center justify-center rounded bg-surface-2/60 p-1">
+              <User className="h-3 w-3 text-text-faint" aria-hidden />
+              <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-text opacity-0 shadow-md transition-opacity duration-150 group-hover/chip:opacity-100">
+                {formatAssigneeLabel(task.assignee)}
               </span>
             </div>
           )}

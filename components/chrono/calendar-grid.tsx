@@ -3,8 +3,22 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { createPortal } from "react-dom"
 import { startOfWeek, addDays, isToday, getDate, format } from "date-fns"
-import { Clock, Calendar, Repeat, Folder, Sparkles, FileText, Star, BookOpen, Layout, Image as ImageIcon } from "lucide-react"
+import {
+  Check,
+  Clock,
+  Calendar,
+  User,
+  Folder,
+  Sparkles,
+  FileText,
+  Star,
+  BookOpen,
+  Layout,
+  Image as ImageIcon,
+} from "lucide-react"
 import { PriorityIcon } from "@/components/chrono/sidebar"
+import { formatAssigneeLabel } from "@/components/chrono/assignee-utils"
+import type { TaskAssignee } from "@/components/chrono/task-editor-modal"
 import { cn } from "@/lib/utils"
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -50,6 +64,12 @@ interface CalendarEvent {
   tag?: string
   priority?: string
   projectName?: string
+  /** When true, checkbox shows checked (calendar grid normally omits completed tasks). */
+  completed?: boolean
+  /** Optional note from task model (shown in hover popover when set). */
+  notes?: string
+  /** From task model; drives popover assignee row. */
+  assignee?: TaskAssignee
 }
 
 type DragState =
@@ -138,6 +158,7 @@ export function CalendarGrid({
   onEventMove,
   onEventResize,
   onEventDoubleClick,
+  onToggleComplete,
   onSidebarTaskDrop,
   externalEvents,
   anchorDate,
@@ -147,6 +168,8 @@ export function CalendarGrid({
   onEventMove?: (payload: EventMovePayload) => void
   onEventResize?: (payload: EventResizePayload) => void
   onEventDoubleClick?: (eventId: string) => void
+  /** Marks task completed; same handler as sidebar — task then drops off the grid via parent state. */
+  onToggleComplete?: (taskId: string) => void
   onSidebarTaskDrop?: (payload: SidebarTaskDropPayload) => void
   externalEvents?: CalendarEvent[]
   anchorDate?: Date
@@ -622,10 +645,36 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                         {/* Left color stripe */}
                         <div className="absolute left-0 top-0 h-full w-[3px]" style={getStripeStyles(evColor)} />
 
-                        <p className="truncate text-xs font-medium text-text">{ev.title}</p>
-                        <p className="truncate text-[10px] text-text-faint/60">
-                          {formatTime12(ev.startMinutes!)} - {formatTime12(ev.endMinutes!)}
-                        </p>
+                        <div className="flex min-h-0 min-w-0 gap-1.5">
+                          <button
+                            type="button"
+                            aria-label={`Mark "${ev.title}" complete`}
+                            className={cn(
+                              "group/cal-task-check pointer-events-auto relative z-[1] mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-text-faint/45 bg-transparent outline-none",
+                              "hover:border-text-muted/70 focus-visible:ring-1 focus-visible:ring-app-accent focus-visible:ring-offset-1 focus-visible:ring-offset-transparent"
+                            )}
+                            onPointerDown={(e) => {
+                              e.stopPropagation()
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onToggleComplete?.(ev.id)
+                            }}
+                            onDoubleClick={(e) => e.stopPropagation()}
+                          >
+                            <Check
+                              aria-hidden
+                              className="pointer-events-none h-3 w-3 text-text-muted/75 opacity-0 transition-opacity duration-150 ease-out group-hover/cal-task-check:opacity-100"
+                              strokeWidth={2.25}
+                            />
+                          </button>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-medium leading-tight text-text">{ev.title}</p>
+                            <p className="mt-0.5 truncate text-[10px] leading-tight text-text-faint/60">
+                              {formatTime12(ev.startMinutes!)} - {formatTime12(ev.endMinutes!)}
+                            </p>
+                          </div>
+                        </div>
 
                         <div
                           className={cn(
@@ -718,7 +767,9 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                     <div className="mt-0.5 h-9 w-1 shrink-0 rounded-full" style={{ backgroundColor: ev.tagColor || "var(--color-app-accent)" }} />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-text">{ev.title}</p>
-                      <p className="mt-0.5 truncate text-xs text-text-faint">No notes yet</p>
+                      <p className="mt-0.5 truncate text-xs text-text-faint">
+                        {ev.notes?.trim() ? ev.notes.trim() : "No notes yet"}
+                      </p>
                     </div>
                   </div>
 
@@ -750,11 +801,13 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
 
                   <div>
                     <div className="mb-1.5 flex items-center gap-1.5">
-                      <Repeat className="h-3.5 w-3.5 text-text-faint" />
-                      <span className="text-[11px] font-medium text-text-muted">Repeat</span>
+                      <User className="h-3.5 w-3.5 text-text-faint" />
+                      <span className="text-[11px] font-medium text-text-muted">Assignee</span>
                     </div>
                     <div className="pl-0.5">
-                      <span className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium text-text">Does not repeat</span>
+                      <span className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium text-text">
+                        {formatAssigneeLabel(ev.assignee)}
+                      </span>
                     </div>
                   </div>
                 </div>,
