@@ -1,56 +1,16 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useCallback } from "react"
 import { createPortal } from "react-dom"
-import { FolderPlus, MoreHorizontal, Search, Pencil, Trash2, Check } from "lucide-react"
-import type { LucideIcon } from "lucide-react"
+import { MoreHorizontal, Search, Pencil, Trash2, Plus, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { CanvasProject } from "./canvas-board"
 import { IconTooltipButton } from "./icon-tooltip-button"
+import { ProjectItem } from "./project-item"
+import { AddProjectPopover } from "./add-project-popover"
+import { ProjectColorSwatchGrid, PROJECT_COLORS } from "./project-palette"
 
-export const PROJECT_COLORS = [
-  "#ef4444",
-  "#f97316",
-  "#eab308",
-  "#22c55e",
-  "#3b82f6",
-  "#6366f1",
-  "#8b5cf6",
-  "#ec4899",
-  "#14b8a6",
-  "#6b7280",
-] as const
-
-export function ProjectColorSwatchGrid({
-  value,
-  onChange,
-}: {
-  value?: string
-  onChange: (color: string) => void
-}) {
-  return (
-    <div className="grid w-fit grid-cols-5 gap-2">
-      {PROJECT_COLORS.map((color) => {
-        const isActive = color === value
-        return (
-          <button
-            key={color}
-            type="button"
-            onClick={() => onChange(color)}
-            className={cn(
-              "relative flex h-4 w-4 items-center justify-center rounded-[4px] transition-transform",
-              "focus-visible:outline-none",
-              !isActive && "hover:scale-[1.08]"
-            )}
-            style={{ backgroundColor: color }}
-          >
-            {isActive && <Check className="h-2.5 w-2.5 text-white" />}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
+export { PROJECT_COLORS, ProjectColorSwatchGrid } from "./project-palette"
 
 interface CanvasSidebarProps {
   collapsed: boolean
@@ -62,6 +22,13 @@ interface CanvasSidebarProps {
   onAddProject: (name?: string, icon?: string) => void
   onUpdateProject: (projectId: string, updates: Partial<CanvasProject>) => void
   onDeleteProject: (projectId: string) => void
+  /** Same as calendar sidebar: quick-add task scoped to a project (+ on project row). */
+  onQuickAddTask?: (preset: {
+    tag?: string
+    date?: Date
+    schedule?: string
+    projectId?: string
+  }) => void
   appMode: import("./top-bar").AppMode
   sidebarView: "tasks" | "agenda"
   onSidebarModeClick: (view: "tasks" | "agenda" | "canvas") => void
@@ -76,6 +43,7 @@ export function CanvasSidebar({
   onAddProject,
   onUpdateProject,
   onDeleteProject,
+  onQuickAddTask,
   appMode,
   sidebarView,
   onSidebarModeClick,
@@ -89,6 +57,12 @@ export function CanvasSidebar({
   const [renameValue, setRenameValue] = useState("")
   const renameInputRef = useRef<HTMLInputElement | null>(null)
   const [search, setSearch] = useState("")
+  const [projectsOpen, setProjectsOpen] = useState(true)
+  const projectsRef = useRef<HTMLDivElement>(null)
+  const [projectsHeight, setProjectsHeight] = useState<number | undefined>(undefined)
+  const addProjectBtnRef = useRef<HTMLButtonElement>(null)
+  const [addProjectOpen, setAddProjectOpen] = useState(false)
+  const [addProjectPos, setAddProjectPos] = useState<{ top: number; left: number } | null>(null)
 
   useEffect(() => {
     if (!collapsed) {
@@ -108,13 +82,29 @@ export function CanvasSidebar({
     })
   }, [renamingProjectId, projects])
 
-  const handleRenameCommit = (projectId: string, value: string) => {
-    const trimmed = value.trim()
-    if (trimmed) {
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (projectsRef.current) setProjectsHeight(projectsRef.current.scrollHeight)
+    })
+  }, [projects, renamingProjectId, actionsDropdown])
+
+  const commitProjectRename = useCallback(
+    (projectId: string, value: string) => {
+      const trimmed = value.trim()
+      if (!trimmed) {
+        setRenamingProjectId(null)
+        return
+      }
+      const project = projects.find((p) => p.id === projectId)
+      if (!project || trimmed === project.name) {
+        setRenamingProjectId(null)
+        return
+      }
       onUpdateProject(projectId, { name: trimmed })
-    }
-    setRenamingProjectId(null)
-  }
+      setRenamingProjectId(null)
+    },
+    [onUpdateProject, projects]
+  )
 
   return (
     <aside
@@ -137,94 +127,106 @@ export function CanvasSidebar({
                   className="w-full bg-transparent text-sm text-text outline-none placeholder:text-text-muted"
                 />
               </div>
-              <button
-                type="button"
-                onClick={() => onAddProject()}
-                className="flex h-8 w-8 items-center justify-center rounded-md bg-surface-2/60 text-text-muted transition-colors hover:bg-surface hover:text-text"
-              >
-                <FolderPlus className="h-4 w-4" />
-              </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-1.5 pb-3">
+            <div className="flex-1 overflow-y-auto px-1.5 py-3">
               {projects.length === 0 ? (
                 <div className="mt-6 px-3 text-xs text-text-muted">
                   No projects yet. Create one to start a canvas.
                 </div>
               ) : (
-                <div className="space-y-0.5">
-                  {projects.map((project) => {
-                    const isActive = project.id === activeProjectId
-                    const isRenaming = renamingProjectId === project.id
-                    return (
-                      <div
-                        key={project.id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => onSelectProject(project.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault()
-                            onSelectProject(project.id)
-                          }
-                        }}
+                <>
+                  <div className="group/projects mb-0.5 flex w-full items-center px-2">
+                    <button
+                      type="button"
+                      onClick={() => setProjectsOpen(!projectsOpen)}
+                      className="flex flex-1 items-center gap-1.5 text-[13px] font-medium text-text/60 transition-colors duration-300 ease-in-out hover:text-text/90"
+                    >
+                      <ChevronRight
                         className={cn(
-                          "group flex w-full items-center rounded-md px-2.5 py-2 text-left text-sm transition-colors",
-                          isActive
-                            ? "bg-faint text-text"
-                            : "text-text-muted hover:text-text"
+                          "h-2.5 w-2.5 transition-transform duration-200",
+                          projectsOpen && "rotate-90"
                         )}
-                      >
-                        <div className="flex min-w-0 flex-1 items-center gap-2">
-                          <span
-                            className="h-2.5 w-2.5 shrink-0 rounded-full"
-                            style={{ backgroundColor: project.color ?? "#94a3b8" }}
+                      />
+                      Projects
+                    </button>
+                    <button
+                      ref={addProjectBtnRef}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (addProjectBtnRef.current) {
+                          const rect = addProjectBtnRef.current.getBoundingClientRect()
+                          setAddProjectPos({ top: rect.bottom + 4, left: rect.left })
+                        }
+                        setAddProjectOpen(true)
+                      }}
+                      className="flex h-6 w-6 items-center justify-center rounded text-text-muted opacity-0 transition-all duration-300 ease-in-out hover:bg-surface-2 hover:text-text group-hover/projects:opacity-100"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  <div
+                    ref={projectsRef}
+                    className="transform transition-[max-height,opacity,transform] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+                    style={{
+                      maxHeight: projectsOpen ? (projectsHeight ?? 2000) : 0,
+                      opacity: projectsOpen ? 1 : 0,
+                      overflow: "hidden",
+                      transform: projectsOpen ? "translateY(0)" : "translateY(-4px)",
+                    }}
+                  >
+                    <div
+                      className={cn(
+                        "transform transition-opacity transition-transform duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]",
+                        projectsOpen ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1"
+                      )}
+                    >
+                      {projects.map((project) => {
+                        const count = projectTaskCounts[project.id] ?? 0
+                        const isRenaming = renamingProjectId === project.id
+                        return (
+                          <ProjectItem
+                            key={project.id}
+                            label={project.name}
+                            color={project.color}
+                            count={count > 0 ? count : undefined}
+                            hasChevron={false}
+                            isActive={project.id === activeProjectId}
+                            onRowClick={() => onSelectProject(project.id)}
+                            isRenaming={isRenaming}
+                            renameValue={renameValue}
+                            renameInputRef={renameInputRef}
+                            onRenameChange={setRenameValue}
+                            onRenameCommit={(value) => commitProjectRename(project.id, value)}
+                            onRenameCancel={() => setRenamingProjectId(null)}
+                            onPlusClick={
+                              onQuickAddTask ? () => onQuickAddTask({ projectId: project.id }) : undefined
+                            }
+                            onMoreClick={(anchor) => {
+                              setActionsDropdown({ projectId: project.id, anchor })
+                            }}
                           />
-                          {isRenaming ? (
-                            <input
-                              ref={renameInputRef}
-                              value={renameValue}
-                              onChange={(e) => setRenameValue(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") handleRenameCommit(project.id, renameValue)
-                                else if (e.key === "Escape") setRenamingProjectId(null)
-                              }}
-                              onBlur={() => handleRenameCommit(project.id, renameValue)}
-                              className="min-w-0 flex-1 truncate rounded border border-app-faint/50 bg-surface-2 px-1.5 py-0.5 text-sm text-text outline-none"
-                            />
-                          ) : (
-                            <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                          )}
-                        </div>
-                        {!isRenaming && (
-                          <div className="ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:bg-surface-2 hover:text-text">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                                setActionsDropdown({
-                                  projectId: project.id,
-                                  anchor: {
-                                    top: rect.top,
-                                    left: rect.left,
-                                    right: rect.right,
-                                    bottom: rect.bottom,
-                                  },
-                                })
-                              }}
-                              className="flex h-6 w-6 items-center justify-center rounded text-inherit"
-                            >
-                  <MoreHorizontal className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </>
               )}
             </div>
+
+            {addProjectOpen && addProjectPos && (
+              <AddProjectPopover
+                pos={addProjectPos}
+                existingNames={projects.map((p) => p.name)}
+                onClose={() => setAddProjectOpen(false)}
+                onCreate={(name, color) => {
+                  onAddProject(name, color)
+                  setAddProjectOpen(false)
+                }}
+              />
+            )}
 
             {actionsDropdown && (() => {
               const project = projects.find((p) => p.id === actionsDropdown.projectId)

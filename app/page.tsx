@@ -946,6 +946,7 @@ export default function ChronoApp() {
                 onAddProject={handleAddProject}
                 onUpdateProject={handleCanvasProjectUpdate}
                 onDeleteProject={handleCanvasProjectDelete}
+                onQuickAddTask={handleSidebarQuickAdd}
                 appMode={appMode}
                 sidebarView={sidebarView}
                 onSidebarModeClick={handleSidebarModeClick}

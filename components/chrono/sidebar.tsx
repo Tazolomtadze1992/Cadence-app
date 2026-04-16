@@ -18,7 +18,7 @@ import {
   User,
 } from "lucide-react"
 import { Calendar } from "@/components/ui/calendar"
-import { WhenDropdownMonthCaption, WhenDropdownDayButton } from "@/components/chrono/task-editor-modal"
+import { whenInlineCalendarFormatters } from "@/components/chrono/task-editor-modal"
 import {
   QUICK_WHEN_OPTIONS,
   PICK_DATE_ICON,
@@ -29,7 +29,9 @@ import { formatAssigneeLabel, isAssignedDesignee } from "@/components/chrono/ass
 import type { CanvasProject } from "./canvas-board"
 import { AgendaView } from "./agenda-view"
 import { IconTooltipButton } from "./icon-tooltip-button"
-import { ProjectActionsDropdown, ProjectColorSwatchGrid, PROJECT_COLORS } from "./canvas-sidebar"
+import { ProjectActionsDropdown } from "./canvas-sidebar"
+import { ProjectItem } from "./project-item"
+import { AddProjectPopover } from "./add-project-popover"
 import { bucketForSchedulePickedDate } from "./picked-due-bucket"
 
 const scheduledGroups = [
@@ -1389,61 +1391,65 @@ function TaskActionsDropdown({
                 <ChevronLeft className="h-3.5 w-3.5" />
                 Back
               </button>
-              <Calendar
-                mode="single"
-                hideNavigation
-                captionLayout="label"
-                selected={
-                  task.schedulePickedDate
-                    ? new Date(`${task.schedulePickedDate}T12:00:00`)
-                    : undefined
-                }
-                onSelect={(date) => {
-                  if (date) {
-                    onUpdateTask(task.id, {
-                      schedule: "picked",
-                      schedulePickedDate: format(startOfDay(date), "yyyy-MM-dd"),
-                    })
-                    setScheduleMenuView("options")
-                    closeWithAnimation()
+              <div className="min-w-0" onClick={(e) => e.stopPropagation()}>
+                <Calendar
+                  navLayout="around"
+                  mode="single"
+                  captionLayout="label"
+                  formatters={whenInlineCalendarFormatters}
+                  selected={
+                    task.schedulePickedDate
+                      ? new Date(`${task.schedulePickedDate}T12:00:00`)
+                      : undefined
                   }
-                }}
-                defaultMonth={
-                  task.schedulePickedDate
-                    ? new Date(`${task.schedulePickedDate}T12:00:00`)
-                    : new Date()
-                }
-                buttonVariant="ghost"
-                className="w-full max-w-[260px] rounded-lg bg-transparent p-0 [--cell-size:1.5rem]"
-                components={{
-                  MonthCaption: WhenDropdownMonthCaption,
-                  DayButton: WhenDropdownDayButton,
-                }}
-                classNames={{
-                  root: "w-full",
-                  months: "flex w-full flex-col gap-0",
-                  month:
-                    "flex w-full flex-col gap-0 px-4 pb-5 [&_[role=grid]]:w-full",
-                  month_caption: "w-full min-w-0",
-                  button_previous:
-                    "inline-flex size-7 shrink-0 items-center justify-center rounded-md p-0 text-text-muted transition-colors hover:bg-surface-2 hover:text-text",
-                  button_next:
-                    "inline-flex size-7 shrink-0 items-center justify-center rounded-md p-0 text-text-muted transition-colors hover:bg-surface-2 hover:text-text",
-                  month_grid:
-                    "mt-2 w-full min-w-0 table-fixed border-collapse",
-                  weekdays: "w-full",
-                  weekday:
-                    "h-8 w-[14.285714%] p-0 text-center align-middle text-[12px] font-normal text-text-muted select-none",
-                  weeks: "w-full",
-                  week: "w-full h-[2.25rem]",
-                  day: "w-[14.285714%] p-0 text-center align-middle text-[13px] focus-within:relative focus-within:z-20",
-                  day_button: "font-normal",
-                  today: "bg-transparent",
-                  selected: "bg-transparent",
-                  outside: "text-text-faint opacity-50",
-                  disabled: "opacity-30",
-                }}
-              />
+                  onSelect={(date) => {
+                    if (date) {
+                      onUpdateTask(task.id, {
+                        schedule: "picked",
+                        schedulePickedDate: format(startOfDay(date), "yyyy-MM-dd"),
+                      })
+                      setScheduleMenuView("options")
+                      closeWithAnimation()
+                    }
+                  }}
+                  defaultMonth={
+                    task.schedulePickedDate
+                      ? new Date(`${task.schedulePickedDate}T12:00:00`)
+                      : new Date()
+                  }
+                  className="w-full max-w-[min(260px,calc(100vw-2rem))] !bg-transparent !p-0 [--cell-size:2rem]"
+                  modifiersClassNames={{
+                    today:
+                      "[&_button:not([data-selected-single=true])]:bg-app-accent [&_button:not([data-selected-single=true])]:text-white [&_button:not([data-selected-single=true])]:hover:bg-app-accent/90",
+                    selected:
+                      "[&_button]:z-[1] [&_button]:ring-2 [&_button]:ring-white/25 [&_button]:ring-offset-0",
+                  }}
+                  classNames={{
+                    months: "flex w-full flex-col gap-0",
+                    month: "relative w-full gap-1 p-0",
+                    month_caption:
+                      "relative mb-0 flex h-8 w-full shrink-0 items-center justify-start px-9",
+                    caption_label:
+                      "w-full text-left text-sm font-semibold tracking-tight text-text",
+                    button_previous:
+                      "absolute left-0 top-0 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-md p-0 text-text-muted opacity-80 transition-colors hover:bg-surface-2 hover:opacity-100 aria-disabled:opacity-30",
+                    button_next:
+                      "absolute right-0 top-0 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-md p-0 text-text-muted opacity-80 transition-colors hover:bg-surface-2 hover:opacity-100 aria-disabled:opacity-30",
+                    month_grid: "w-full border-collapse",
+                    weekdays: "mt-0.5 flex w-full",
+                    weekday:
+                      "flex-1 select-none text-center text-[0.65rem] font-medium uppercase tracking-wide text-text-muted",
+                    week: "mt-0.5 flex w-full",
+                    day: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20",
+                    day_button:
+                      "size-8 min-h-8 min-w-8 rounded-md p-0 font-normal text-text hover:bg-surface-2 data-[selected-single=true]:!bg-app-accent data-[selected-single=true]:!text-white data-[selected-single=true]:hover:!bg-app-accent",
+                    today: "bg-transparent p-0",
+                    selected: "bg-transparent",
+                    outside: "text-text-faint opacity-45 aria-selected:opacity-100",
+                    disabled: "text-text-faint opacity-30",
+                  }}
+                />
+              </div>
             </div>
           )}
         </DropdownSubmenu>
@@ -1725,230 +1731,5 @@ function SidebarItem({
         </div>
       )}
     </div>
-  )
-}
-
-function ProjectItem({
-  label,
-  color,
-  count,
-  hasChevron,
-  isExpanded,
-  onToggleExpand,
-  isRenaming,
-  renameValue,
-  renameInputRef,
-  onRenameChange,
-  onRenameCommit,
-  onRenameCancel,
-  onPlusClick,
-  onMoreClick,
-}: {
-  label: string
-  color?: string
-  count?: number
-  hasChevron?: boolean
-  isExpanded?: boolean
-  onToggleExpand?: () => void
-  isRenaming?: boolean
-  renameValue?: string
-  renameInputRef?: React.RefObject<HTMLInputElement | null>
-  onRenameChange?: (value: string) => void
-  onRenameCommit?: (value: string) => void
-  onRenameCancel?: () => void
-  onPlusClick?: () => void
-  onMoreClick?: (anchor: { top: number; left: number; right: number; bottom: number }) => void
-}) {
-  return (
-    <div
-      className={cn(
-        "group flex w-full items-center rounded px-2 py-1 text-sm cursor-pointer transition-colors",
-        isRenaming ? "bg-transparent" : "hover:bg-surface-2/30"
-      )}
-      onClick={onToggleExpand}
-    >
-      <div className="flex flex-1 items-center min-w-0">
-        <div className="flex min-w-0 flex-1 items-center gap-2.5">
-          {hasChevron && (
-            <ChevronRight
-              className={cn(
-                "h-3 w-3 shrink-0 text-text-faint transition-transform duration-200",
-                onToggleExpand && "group-hover:text-text",
-                isExpanded && "rotate-90"
-              )}
-            />
-          )}
-          <span
-            className="h-2.5 w-2.5 shrink-0 rounded-full opacity-70 transition-opacity duration-150 group-hover:opacity-100"
-            style={{ backgroundColor: color ?? "#94a3b8" }}
-          />
-          {isRenaming ? (
-            <input
-              ref={renameInputRef as any}
-              value={renameValue ?? ""}
-              onChange={(e) => onRenameChange?.(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault()
-                  onRenameCommit?.(renameValue ?? "")
-                } else if (e.key === "Escape") {
-                  e.preventDefault()
-                  onRenameCancel?.()
-                }
-              }}
-              onBlur={() => onRenameCommit?.(renameValue ?? "")}
-              className="min-w-0 flex-1 truncate bg-transparent text-sm font-medium text-text outline-none placeholder:text-text-muted"
-            />
-          ) : (
-            <span className="truncate text-text">{label}</span>
-          )}
-          {count !== undefined && <span className="shrink-0 text-[11px] text-text-faint tabular-nums">{count}</span>}
-        </div>
-
-        {!isRenaming && (onPlusClick || onMoreClick) && (
-          <div className="ml-auto flex shrink-0 items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-            {onPlusClick && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onPlusClick()
-                }}
-                className="flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
-            )}
-            {onMoreClick && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                  onMoreClick({
-                    top: rect.top,
-                    left: rect.left,
-                    right: rect.right,
-                    bottom: rect.bottom,
-                  })
-                }}
-                className="flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
-              >
-                <MoreHorizontal className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function AddProjectPopover({
-  pos,
-  existingNames,
-  onClose,
-  onCreate,
-}: {
-  pos: { top: number; left: number }
-  existingNames: string[]
-  onClose: () => void
-  onCreate: (name: string, color: string) => void
-}) {
-  const [name, setName] = useState("")
-  const [color, setColor] = useState<string>(PROJECT_COLORS[0] ?? "#94a3b8")
-  const [error, setError] = useState<string | null>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    const id = window.setTimeout(() => inputRef.current?.focus(), 0)
-    return () => window.clearTimeout(id)
-  }, [])
-
-  const lowerExisting = useMemo(
-    () => existingNames.map((n) => n.trim().toLowerCase()).filter(Boolean),
-    [existingNames]
-  )
-
-  const validate = useCallback(
-    (value: string) => {
-      const trimmed = value.trim()
-      if (!trimmed) {
-        setError("Name cannot be empty")
-        return false
-      }
-      if (lowerExisting.includes(trimmed.toLowerCase())) {
-        setError("A project with this name already exists")
-        return false
-      }
-      setError(null)
-      return true
-    },
-    [lowerExisting]
-  )
-
-  const handleSave = () => {
-    if (!validate(name)) return
-    onCreate(name.trim(), color)
-  }
-
-  return createPortal(
-    <div
-      className="fixed z-[120] w-fit rounded-xl border border-border/50 bg-background p-3 shadow-lg"
-      style={{ top: pos.top, left: pos.left }}
-    >
-        <div className="flex flex-col items-start">
-        <div className="mb-2 w-full">
-          <input
-            ref={inputRef}
-            value={name}
-            onChange={(e) => {
-              setName(e.target.value)
-              if (error) validate(e.target.value)
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault()
-                handleSave()
-              } else if (e.key === "Escape") {
-                e.preventDefault()
-                onClose()
-              }
-            }}
-            className="w-[180px] rounded-md border border-border/60 bg-surface-2 px-2 py-1.5 text-xs text-text outline-none placeholder:text-text-muted"
-            placeholder="New project"
-          />
-          {error && <p className="mt-1 text-[11px] text-red-400">{error}</p>}
-        </div>
-
-        <div className="mb-3">
-          <ProjectColorSwatchGrid value={color} onChange={setColor} />
-        </div>
-
-        <div className="flex w-full items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded border border-border/50 bg-surface-2 px-3 py-1.5 text-[11px] font-medium text-text-muted transition-colors hover:bg-surface"
-          >
-            Discard
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={!!error || !name.trim()}
-            className={cn(
-              "rounded px-3 py-1.5 text-[11px] font-medium transition-all",
-              !error && name.trim()
-                ? "bg-app-accent text-app-accent-foreground shadow-sm hover:brightness-110 hover:shadow-md"
-                : "cursor-not-allowed bg-app-accent/30 text-text-faint"
-            )}
-          >
-            Save
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body
   )
 }

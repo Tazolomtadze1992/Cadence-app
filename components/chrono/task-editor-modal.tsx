@@ -3,153 +3,24 @@
 import React, { useEffect, useRef, useState, useCallback } from "react"
 import { createPortal } from "react-dom"
 import { cn } from "@/lib/utils"
-import { User, CornerDownLeft, Tag, ChevronLeft, ChevronRight } from "lucide-react"
-import {
-  DayButton,
-  getDefaultClassNames,
-  MonthCaption,
-  useDayPicker,
-} from "react-day-picker"
+import { User, CornerDownLeft, Tag } from "lucide-react"
 import { Calendar } from "@/components/ui/calendar"
-import { Button } from "@/components/ui/button"
 import { format, startOfDay } from "date-fns"
 import type { CanvasProject } from "./canvas-board"
-import {
-  QUICK_WHEN_OPTIONS,
-  PICK_DATE_ICON,
-  formatWhenPickedDateLabel,
-  whenPickRowLabel,
-  whenTriggerIconSrc,
-} from "./schedule-when-shared"
-
-/** Single header row: month/year left, prev/next chevrons grouped on the right. */
-export function WhenDropdownMonthCaption(
-  props: React.ComponentProps<typeof MonthCaption>
-) {
-  const {
-    calendarMonth,
-    className,
-    children: _ignoredCaption,
-    displayIndex: _displayIndex,
-    ...rest
-  } = props
-  const {
-    previousMonth,
-    nextMonth,
-    goToMonth,
-    labels: { labelPrevious, labelNext },
-    classNames: rdpClassNames,
-    dayPickerProps,
-  } = useDayPicker()
-
-  const handlePrev = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!previousMonth) return
-    goToMonth(previousMonth)
-    dayPickerProps.onPrevClick?.(previousMonth)
-  }
-  const handleNext = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!nextMonth) return
-    goToMonth(nextMonth)
-    dayPickerProps.onNextClick?.(nextMonth)
-  }
-
-  return (
-    <div
-      className={cn(
-        "flex w-full items-center justify-between gap-2 pt-2 pb-2",
-        className
-      )}
-      {...rest}
-    >
-      <span
-        className="min-w-0 flex-1 truncate px-[10px] text-left text-[15px] font-semibold tracking-tight text-text"
-        role="status"
-        aria-live="polite"
-      >
-        {format(calendarMonth.date, "MMMM yyyy")}
-      </span>
-      <div className="flex shrink-0 items-center gap-1">
-        <button
-          type="button"
-          className={rdpClassNames.button_previous}
-          onClick={handlePrev}
-          disabled={!previousMonth}
-          aria-label={labelPrevious(previousMonth)}
-          aria-disabled={previousMonth ? undefined : true}
-        >
-          <ChevronLeft className="size-3.5 opacity-80" aria-hidden />
-        </button>
-        <button
-          type="button"
-          className={rdpClassNames.button_next}
-          onClick={handleNext}
-          disabled={!nextMonth}
-          aria-label={labelNext(nextMonth)}
-          aria-disabled={nextMonth ? undefined : true}
-        >
-          <ChevronRight className="size-3.5 opacity-80" aria-hidden />
-        </button>
-      </div>
-    </div>
-  )
-}
-
-/** Compact inline calendar day cell: accent for today; picked date matches modal (`bg-secondary`); accent ring when today is also selected. */
-export function WhenDropdownDayButton({
-  className,
-  day,
-  modifiers,
-  ...props
-}: React.ComponentProps<typeof DayButton>) {
-  const defaultClassNames = getDefaultClassNames()
-  const ref = React.useRef<HTMLButtonElement>(null)
-  React.useEffect(() => {
-    if (modifiers.focused) ref.current?.focus()
-  }, [modifiers.focused])
-
-  const { selected, today, outside, disabled } = modifiers
-
-  return (
-    <Button
-      ref={ref}
-      variant="ghost"
-      size="icon"
-      data-day={day.date.toLocaleDateString()}
-      data-selected-single={
-        Boolean(
-          selected &&
-            !modifiers.range_start &&
-            !modifiers.range_end &&
-            !modifiers.range_middle
-        )
-      }
-      className={cn(
-        "mx-auto flex aspect-square size-auto h-[var(--cell-size)] min-h-0 min-w-0 w-[var(--cell-size)] max-w-full p-0 text-[13px] font-normal leading-none",
-        "rounded-md transition-colors",
-        disabled && "opacity-30",
-        outside && !selected && "text-text-faint opacity-50",
-        !outside && !selected && !today && "text-text hover:bg-surface-2",
-        today &&
-          !selected &&
-          "bg-app-accent text-white hover:bg-app-accent hover:text-white",
-        selected &&
-          "bg-secondary text-secondary-foreground hover:bg-secondary/90 hover:text-secondary-foreground",
-        today && selected && "ring-2 ring-inset ring-app-accent",
-        defaultClassNames.day,
-        className
-      )}
-      {...props}
-    />
-  )
-}
 
 function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)
   const b = parseInt(hex.slice(5, 7), 16)
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+/** Compact inline weekday row (Su–Sa) to match the When dropdown reference. */
+const WHEN_INLINE_WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const
+
+export const whenInlineCalendarFormatters = {
+  formatWeekdayName: (weekday: Date) =>
+    WHEN_INLINE_WEEKDAY_LABELS[weekday.getDay()] ?? "",
 }
 
 /** Stored on `Task`; empty string means unassigned. */
@@ -173,6 +44,14 @@ function getDefaultStartMinutes(): number {
   const raw = now.getHours() * 60 + now.getMinutes()
   return Math.ceil(raw / 15) * 15
 }
+
+/** Quick When options (custom dates use `schedule: "picked"` + `scheduledDate`). */
+const quickWhenOptions = [
+  { value: "today", label: "Today", icon: "due-today.svg" },
+  { value: "tomorrow", label: "Tomorrow", icon: "due-tomorrow.svg" },
+] as const
+
+const PICK_DATE_ICON = "/icons/due-soon.svg"
 
 const priorityOptions = [
   { value: "high", label: "High", icon: "high.svg" },
@@ -209,6 +88,8 @@ export interface TaskEditorInitialData {
   /** When true, duration is left empty (no start/end). Used for sidebar + flows. */
   noDuration?: boolean
   presetProjectId?: string
+  /** Open the When dropdown showing the inline calendar (e.g. quick add from Due soon). */
+  startWhenDropdownInDateMode?: boolean
 }
 
 export interface TaskEditorSaveData extends TaskData {
@@ -312,6 +193,13 @@ export function TaskEditorPanel({
     }
   }, [activeDropdown])
 
+  useEffect(() => {
+    if (initialData?.startWhenDropdownInDateMode && !editingTask) {
+      setSchedulePanelView("calendar")
+      setActiveDropdown("schedule")
+    }
+  }, [initialData, editingTask])
+
   const selectedPriority =
     priorityOptions.find((o) => o.value === task.priority) || priorityOptions[3]
   const selectedAssignee =
@@ -329,14 +217,19 @@ export function TaskEditorPanel({
   // When: Today / Tomorrow / Pick a date (picked uses due-soon icon + formatted date)
   const isPickedDate = task.schedule === "picked" && task.scheduledDate
   const scheduleDisplayLabel =
-    task.schedule === "picked" && task.scheduledDate
-      ? formatWhenPickedDateLabel(task.scheduledDate)
+    isPickedDate && task.scheduledDate
+      ? format(new Date(task.scheduledDate), "MMM d")
       : task.schedule === "today"
         ? "Today"
         : task.schedule === "tomorrow"
           ? "Tomorrow"
-          : whenPickRowLabel(task.schedule, task.scheduledDate)
-  const scheduleIconSrc = whenTriggerIconSrc(task.schedule)
+          : "Pick a date"
+  const scheduleIconSrc =
+    task.schedule === "today"
+      ? "/icons/due-today.svg"
+      : task.schedule === "tomorrow"
+        ? "/icons/due-tomorrow.svg"
+        : PICK_DATE_ICON
 
   return (
     <div onClick={() => setActiveDropdown(null)}>
@@ -382,7 +275,7 @@ export function TaskEditorPanel({
             layoutKey={schedulePanelView}
             panelClassName={
               schedulePanelView === "calendar"
-                ? "min-w-[248px] max-w-[min(280px,calc(100vw-2rem))] p-0"
+                ? "min-w-[220px] max-w-[min(280px,calc(100vw-2rem))] p-1.5"
                 : undefined
             }
             trigger={
@@ -393,57 +286,61 @@ export function TaskEditorPanel({
             }
           >
             {schedulePanelView === "calendar" ? (
-              <Calendar
-                mode="single"
-                hideNavigation
-                captionLayout="label"
-                selected={task.scheduledDate ? new Date(task.scheduledDate) : undefined}
-                onSelect={(date) => {
-                  if (date) {
-                    setTask({
-                      ...task,
-                      schedule: "picked",
-                      scheduledDate: startOfDay(date).toISOString(),
-                    })
-                    setSchedulePanelView("options")
-                    setActiveDropdown(null)
-                  }
-                }}
-                defaultMonth={task.scheduledDate ? new Date(task.scheduledDate) : new Date()}
-                buttonVariant="ghost"
-                className="w-full max-w-[260px] rounded-lg bg-transparent p-0 [--cell-size:1.5rem]"
-                components={{
-                  MonthCaption: WhenDropdownMonthCaption,
-                  DayButton: WhenDropdownDayButton,
-                }}
-                classNames={{
-                  root: "w-full",
-                  months: "flex w-full flex-col gap-0",
-                  month:
-                    "flex w-full flex-col gap-0 px-4 pb-5 [&_[role=grid]]:w-full",
-                  month_caption: "w-full min-w-0",
-                  button_previous:
-                    "inline-flex size-7 shrink-0 items-center justify-center rounded-md p-0 text-text-muted transition-colors hover:bg-surface-2 hover:text-text",
-                  button_next:
-                    "inline-flex size-7 shrink-0 items-center justify-center rounded-md p-0 text-text-muted transition-colors hover:bg-surface-2 hover:text-text",
-                  month_grid:
-                    "mt-2 w-full min-w-0 table-fixed border-collapse",
-                  weekdays: "w-full",
-                  weekday:
-                    "h-8 w-[14.285714%] p-0 text-center align-middle text-[12px] font-normal text-text-muted select-none",
-                  weeks: "w-full",
-                  week: "w-full h-[2.25rem]",
-                  day: "w-[14.285714%] p-0 text-center align-middle text-[13px] focus-within:relative focus-within:z-20",
-                  day_button: "font-normal",
-                  today: "bg-transparent",
-                  selected: "bg-transparent",
-                  outside: "text-text-faint opacity-50",
-                  disabled: "opacity-30",
-                }}
-              />
+              <div className="min-w-0" onClick={(e) => e.stopPropagation()}>
+                <Calendar
+                  navLayout="around"
+                  mode="single"
+                  captionLayout="label"
+                  formatters={whenInlineCalendarFormatters}
+                  selected={task.scheduledDate ? new Date(task.scheduledDate) : undefined}
+                  onSelect={(date) => {
+                    if (date) {
+                      setTask({
+                        ...task,
+                        schedule: "picked",
+                        scheduledDate: startOfDay(date).toISOString(),
+                      })
+                      setSchedulePanelView("options")
+                      setActiveDropdown(null)
+                    }
+                  }}
+                  defaultMonth={task.scheduledDate ? new Date(task.scheduledDate) : new Date()}
+                  className="w-full max-w-[min(260px,calc(100vw-2rem))] !bg-transparent !p-0 [--cell-size:2rem]"
+                  modifiersClassNames={{
+                    today:
+                      "[&_button:not([data-selected-single=true])]:bg-app-accent [&_button:not([data-selected-single=true])]:text-white [&_button:not([data-selected-single=true])]:hover:bg-app-accent/90",
+                    selected:
+                      "[&_button]:z-[1] [&_button]:ring-2 [&_button]:ring-white/25 [&_button]:ring-offset-0",
+                  }}
+                  classNames={{
+                    months: "flex w-full flex-col gap-0",
+                    month: "relative w-full gap-1 p-0",
+                    month_caption:
+                      "relative mb-0 flex h-8 w-full shrink-0 items-center justify-start px-9",
+                    caption_label:
+                      "w-full text-left text-sm font-semibold tracking-tight text-text",
+                    button_previous:
+                      "absolute left-0 top-0 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-md p-0 text-text-muted opacity-80 transition-colors hover:bg-surface-2 hover:opacity-100 aria-disabled:opacity-30",
+                    button_next:
+                      "absolute right-0 top-0 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-md p-0 text-text-muted opacity-80 transition-colors hover:bg-surface-2 hover:opacity-100 aria-disabled:opacity-30",
+                    month_grid: "w-full border-collapse",
+                    weekdays: "mt-0.5 flex w-full",
+                    weekday:
+                      "flex-1 select-none text-center text-[0.65rem] font-medium uppercase tracking-wide text-text-muted",
+                    week: "mt-0.5 flex w-full",
+                    day: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20",
+                    day_button:
+                      "size-8 min-h-8 min-w-8 rounded-md p-0 font-normal text-text hover:bg-surface-2 data-[selected-single=true]:!bg-app-accent data-[selected-single=true]:!text-white data-[selected-single=true]:hover:!bg-app-accent",
+                    today: "bg-transparent p-0",
+                    selected: "bg-transparent",
+                    outside: "text-text-faint opacity-45 aria-selected:opacity-100",
+                    disabled: "text-text-faint opacity-30",
+                  }}
+                />
+              </div>
             ) : (
               <>
-                {QUICK_WHEN_OPTIONS.map((option) => (
+                {quickWhenOptions.map((option) => (
                   <button
                     key={option.value}
                     type="button"
@@ -487,7 +384,9 @@ export function TaskEditorPanel({
                   <span
                     className="flex-1 text-left text-text"
                   >
-                    {whenPickRowLabel(task.schedule, task.scheduledDate)}
+                    {isPickedDate && task.scheduledDate
+                      ? format(new Date(task.scheduledDate), "MMM d")
+                      : "Pick a date"}
                   </span>
                   {isPickedDate && (
                     <span className="ml-auto text-text-muted">
@@ -521,7 +420,7 @@ export function TaskEditorPanel({
                   className="h-2.5 w-2.5 rounded-full"
                   style={{ backgroundColor: selectedProject?.color ?? "#94a3b8" }}
                 />
-                <TriggerValue>{selectedProject?.name ?? "Daily Banking"}</TriggerValue>
+                <TriggerValue>{selectedProject?.name ?? "General"}</TriggerValue>
               </div>
             }
           >
