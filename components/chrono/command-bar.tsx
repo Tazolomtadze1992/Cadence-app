@@ -276,7 +276,8 @@ export function CommandBar({
           >
             <button
               onClick={() => {
-                setInitialData(null)
+                // Untimed task (same intent as sidebar quick-add): no calendar block until user drags onto grid.
+                setInitialData({ noDuration: true })
                 setEditorKey((k) => k + 1)
                 setMountEditor(true)
                 setExpanded(true)
