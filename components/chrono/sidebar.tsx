@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo, type ComponentType, type ReactNode, type DragEvent } from "react"
 import { createPortal } from "react-dom"
 import { format, startOfDay, addDays } from "date-fns"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { cn } from "@/lib/utils"
 import {
   ChevronLeft,
@@ -392,10 +392,14 @@ export function AppSidebar({
     }),
   }
 
-  const slideTransition = {
-    duration: 0.2,
-    ease: [0.2, 0.8, 0.2, 1] as const,
-  }
+  const shouldReduceMotion = useReducedMotion()
+  const slideTransition = useMemo(
+    () =>
+      shouldReduceMotion
+        ? { duration: 0 }
+        : { duration: 0.2, ease: [0.2, 0.8, 0.2, 1] as const },
+    [shouldReduceMotion]
+  )
 
   return (
     <aside

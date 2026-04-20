@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { cn } from "@/lib/utils"
 
 interface IconTooltipButtonProps {
@@ -28,6 +28,10 @@ export function IconTooltipButton({
   alwaysPrimary = false,
 }: IconTooltipButtonProps) {
   const [isHovered, setIsHovered] = useState(false)
+  const shouldReduceMotion = useReducedMotion()
+  const tooltipTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : { duration: 0.14, ease: [0.2, 0.8, 0.2, 1] as const }
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const tipRef = useRef<HTMLDivElement>(null)
@@ -136,7 +140,7 @@ export function IconTooltipButton({
             initial={{ opacity: 0, y: tooltipPosition === "above" ? 6 : -6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: tooltipPosition === "above" ? 6 : -6 }}
-            transition={{ duration: 0.14, ease: [0.2, 0.8, 0.2, 1] }}
+            transition={tooltipTransition}
             className={cn(
               "absolute z-50",
               tooltipPosition === "above" ? "bottom-full mb-2" : "top-full mt-2"

@@ -151,7 +151,7 @@ export interface SidebarTaskDropPayload {
   endMinutes: number
 }
 
-const DEFAULT_DROP_DURATION_MINUTES = 30
+const DEFAULT_DROP_DURATION_MINUTES = 60
 
 export function CalendarGrid({
   onDragCreate,
@@ -687,7 +687,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                           <div
                             className={cn(
                               "h-1 w-8 rounded-full origin-center",
-                              "transition-transform transition-colors duration-1000 ease-[cubic-bezier(0.4,0,0.2,1)]",
+                              "transition-transform transition-colors duration-[260ms] ease-[cubic-bezier(0.4,0,0.2,1)]",
                               isResizing ? "scale-x-100 scale-y-100 bg-white/15" : "scale-x-75 scale-y-[0.75] bg-white/10"
                             )}
                           />
@@ -754,7 +754,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                 <div
                   className={cn(
                     "pointer-events-none fixed z-50 w-[280px] rounded-xl border border-border/40 bg-surface/95 p-4 shadow-xl backdrop-blur-sm",
-                    "transition-opacity duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]",
+                    "transition-opacity duration-[250ms] ease-[cubic-bezier(0.4,0,0.2,1)]",
                     popover.visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
                   )}
                   style={{

@@ -378,7 +378,7 @@ export function CanvasBoard({
         <div
           key={item.id}
           data-canvas-item="note"
-          className="group absolute cursor-grab select-none active:cursor-grabbing outline-none focus:outline-none transition-all duration-100 ease-out"
+          className="group absolute cursor-grab select-none active:cursor-grabbing outline-none focus:outline-none transition-[width] duration-100 ease-out"
           style={style}
           onPointerDown={(e) => handlePointerDown(e, item)}
           onDoubleClick={(e) => handleNoteDoubleClick(e, item)}
@@ -433,7 +433,7 @@ export function CanvasBoard({
                   disabled={!isDirty}
                   onClick={() => isDirty && finishEdit(true)}
                   className={cn(
-                    "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-4 py-2 text-xs font-medium transition-all",
+                    "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-4 py-2 text-xs font-medium transition-[background-color,box-shadow,filter] ease-out",
                     isDirty
                       ? "bg-app-accent text-app-accent-foreground shadow-sm hover:brightness-110 hover:shadow-md"
                       : "cursor-not-allowed text-text-faint opacity-50"

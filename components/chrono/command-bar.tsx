@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react"
-import { motion } from "framer-motion"
+import { motion, useReducedMotion } from "framer-motion"
 import { Plus, ChevronLeft, ChevronRight, ArrowRight, ArrowLeft } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { TaskEditorPanel } from "@/components/chrono/task-editor-modal"
@@ -18,7 +18,14 @@ import {
 } from "date-fns"
 
 const COLLAPSED_HEIGHT = 52
-const TRANSITION = { duration: 0.24, ease: [0.25, 0.1, 0.25, 1] as const }
+
+/** Shell motion: ease-out-quart-style; close ~20% faster than open (animations.dev-style). */
+const SHELL_EASE_OUT = [0.165, 0.84, 0.44, 1] as const
+const SHELL_OPEN_S = 0.23
+const SHELL_CLOSE_S = 0.185
+const SHELL_OPEN_MS = Math.round(SHELL_OPEN_S * 1000)
+const SHELL_CLOSE_MS = Math.round(SHELL_CLOSE_S * 1000)
+const SHELL_BEZIER_CSS = "cubic-bezier(0.165, 0.84, 0.44, 1)"
 
 // ─── Date Parsing ────────────────────────────────────────────────────────────
 function parseNaturalDate(input: string): Date | null {
@@ -106,10 +113,13 @@ export function CommandBar({
   projects: CanvasProject[]
 }) {
   const [expanded, setExpanded] = useState(false)
+  /** Keeps `TaskEditorPanel` mounted through close animation until shell height finishes. */
+  const [mountEditor, setMountEditor] = useState(false)
   const [initialData, setInitialData] = useState<TaskEditorInitialData | null>(null)
   const [editorKey, setEditorKey] = useState(0)
   const contentRef = useRef<HTMLDivElement>(null)
   const [expandedHeight, setExpandedHeight] = useState(440)
+  const shouldReduceMotion = useReducedMotion()
 
   // "Go to date" search mode
   const [dateSearchMode, setDateSearchMode] = useState(false)
@@ -142,6 +152,7 @@ export function CommandBar({
     if (externalOpen) {
       setInitialData(externalOpen)
       setEditorKey((k) => k + 1)
+      setMountEditor(true)
       setExpanded(true)
       onExternalOpenHandled?.()
     }
@@ -150,8 +161,8 @@ export function CommandBar({
   // Handle edit mode open (double-click on event)
   useEffect(() => {
     if (editingTask) {
-      console.log("[CommandBar] editingTask set, expanding panel", { id: editingTask.id, title: editingTask.title })
       setEditorKey((k) => k + 1)
+      setMountEditor(true)
       setExpanded(true)
     }
   }, [editingTask])
@@ -186,23 +197,37 @@ export function CommandBar({
 
   // Measure expanded content height after it renders
   useEffect(() => {
-    if (expanded && contentRef.current) {
+    if (expanded && mountEditor && contentRef.current) {
       const measure = () => {
         if (contentRef.current) {
           const h = contentRef.current.scrollHeight
           if (h > 0) setExpandedHeight(h)
         }
       }
-      // Measure after a frame to ensure content is rendered
       requestAnimationFrame(measure)
     }
+  }, [expanded, mountEditor])
+
+  const shellTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : {
+        duration: expanded ? SHELL_OPEN_S : SHELL_CLOSE_S,
+        ease: SHELL_EASE_OUT,
+      }
+
+  const shellOpacityTransition = shouldReduceMotion
+    ? "none"
+    : `opacity ${expanded ? SHELL_OPEN_MS : SHELL_CLOSE_MS}ms ${SHELL_BEZIER_CSS}`
+
+  const handleShellAnimationComplete = useCallback(() => {
+    if (!expanded) setMountEditor(false)
   }, [expanded])
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex items-end justify-center px-4">
       {/* Single motion container that animates height */}
       <motion.div
-        className="pointer-events-auto w-full max-w-[380px] overflow-hidden rounded-xl border border-border/50 bg-secondary shadow-sm"
+        className="pointer-events-auto relative w-full max-w-[380px] overflow-hidden rounded-xl border border-border/50 bg-secondary shadow-sm"
         style={{ originY: 1 }}
         initial={false}
         animate={{
@@ -212,19 +237,20 @@ export function CommandBar({
               ? COLLAPSED_HEIGHT + 56 // Add space for suggestion row
               : COLLAPSED_HEIGHT,
         }}
-        transition={TRANSITION}
+        transition={shellTransition}
+        onAnimationComplete={handleShellAnimationComplete}
       >
         {/* Expanded content */}
         <div
           ref={contentRef}
           className={cn(
-            "transition-opacity duration-200 ease-out",
             expanded
               ? "pointer-events-auto opacity-100"
               : "pointer-events-none absolute inset-x-0 top-0 opacity-0"
           )}
+          style={{ transition: shellOpacityTransition }}
         >
-          {expanded && (
+          {mountEditor && (
             <TaskEditorPanel
               key={editorKey}
               onClose={handleClose}
@@ -241,15 +267,20 @@ export function CommandBar({
         {!dateSearchMode && (
           <div
             className={cn(
-              "flex items-center justify-center gap-1 px-4 transition-opacity duration-200 ease-out",
+              "flex items-center justify-center gap-1 px-4",
               expanded
                 ? "pointer-events-none opacity-0"
                 : "pointer-events-auto opacity-100"
             )}
-            style={{ height: COLLAPSED_HEIGHT }}
+            style={{ height: COLLAPSED_HEIGHT, transition: shellOpacityTransition }}
           >
             <button
-              onClick={() => { setInitialData(null); setEditorKey((k) => k + 1); setExpanded(true) }}
+              onClick={() => {
+                setInitialData(null)
+                setEditorKey((k) => k + 1)
+                setMountEditor(true)
+                setExpanded(true)
+              }}
               className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium text-text-muted transition-colors hover:text-text"
             >
               <Plus className="h-3.5 w-3.5" />

@@ -14,7 +14,7 @@ import {
   LogOut,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { AnimatePresence, motion } from "framer-motion"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 
 type AccountTabId = "profile" | "invite" | "calendars" | "tasks" | "appearance" | "shortcuts" | "download" | "whats-new" | "contact" | "feedback" | "logout"
 
@@ -163,6 +163,16 @@ export function AccountPanel({
   onClose: () => void
 }) {
   const [activeTab, setActiveTab] = useState<AccountTabId>("profile")
+  const shouldReduceMotion = useReducedMotion()
+  /** Single timing curve + duration for overlay + content (paired modal layers). */
+  const accountPanelEase = [0.22, 1, 0.36, 1] as const
+  const accountPanelDuration = 0.24
+  const overlayTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : { duration: accountPanelDuration, ease: accountPanelEase }
+  const panelTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : { duration: accountPanelDuration, ease: accountPanelEase }
 
   const handleEscape = useCallback(
     (e: KeyboardEvent) => {
@@ -198,14 +208,14 @@ export function AccountPanel({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          transition={overlayTransition}
         >
           <motion.div
             className="flex h-full w-full"
             initial={{ opacity: 0, y: 12, scale: 0.985 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.99 }}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            transition={panelTransition}
           >
             {/* Left sidebar (settings navigation) — match app sidebar width */}
             <div className="flex w-[260px] shrink-0 flex-col border-r border-border/20 bg-calendar-bg py-4">

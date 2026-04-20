@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useMemo, useEffect } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { startOfWeek, addDays, addWeeks, startOfDay, format, parseISO } from "date-fns"
 import { AppSidebar } from "@/components/chrono/sidebar"
 import { TopBar, type AppMode } from "@/components/chrono/top-bar"
@@ -212,6 +212,10 @@ export default function ChronoApp() {
     clientHeight: number
   } | null>(null)
   const [sidebarShellDirection, setSidebarShellDirection] = useState<1 | -1>(1)
+  const shouldReduceMotion = useReducedMotion()
+  const sidebarShellTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : sidebarShellSlideTransition
 
   const weekStart = useMemo(() => startOfWeek(anchorDate, { weekStartsOn: 0 }), [anchorDate])
 
@@ -905,7 +909,7 @@ export default function ChronoApp() {
               initial="enter"
               animate="center"
               exit="exit"
-              transition={sidebarShellSlideTransition}
+              transition={sidebarShellTransition}
             >
               <AppSidebar
                 collapsed={sidebarCollapsed}
@@ -934,7 +938,7 @@ export default function ChronoApp() {
               initial="enter"
               animate="center"
               exit="exit"
-              transition={sidebarShellSlideTransition}
+              transition={sidebarShellTransition}
             >
               <CanvasSidebar
                 collapsed={sidebarCollapsed}
