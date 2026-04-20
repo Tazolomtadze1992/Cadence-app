@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useRef, useState, useCallback } from "react"
+import React, { useEffect, useRef, useState, useCallback, useSyncExternalStore } from "react"
 import { createPortal } from "react-dom"
 import { cn } from "@/lib/utils"
 import { User, CornerDownLeft, Tag } from "lucide-react"
@@ -76,6 +76,25 @@ function TriggerValue({ children }: { children: React.ReactNode }) {
 
 function IconImg({ src, className }: { src: string; className?: string }) {
   return <img src={src} alt="" className={cn("h-4 w-4 shrink-0", className)} />
+}
+
+/** Task editor dropdown panels: ease-out enter/leave; exit ~20% faster than open (animations.dev-style). */
+const DROPDOWN_OPEN_MS = 180
+const DROPDOWN_CLOSE_MS = 140
+const DROPDOWN_EASE_OUT = "cubic-bezier(0.165, 0.84, 0.44, 1)"
+
+function subscribePrefersReducedMotion(callback: () => void) {
+  const mq = window.matchMedia("(prefers-reduced-motion: reduce)")
+  mq.addEventListener("change", callback)
+  return () => mq.removeEventListener("change", callback)
+}
+
+function usePrefersReducedMotion(): boolean {
+  return useSyncExternalStore(
+    subscribePrefersReducedMotion,
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    () => false
+  )
 }
 
 export interface TaskEditorInitialData {
@@ -266,7 +285,7 @@ export function TaskEditorPanel({
       {/* Fields */}
       <div className="border-t border-border/50">
         {/* Schedule */}
-        <FieldRow label="When">
+        <FieldRow label="Due to">
           <DropdownField
             id="schedule"
             activeDropdown={activeDropdown}
@@ -275,7 +294,7 @@ export function TaskEditorPanel({
             layoutKey={schedulePanelView}
             panelClassName={
               schedulePanelView === "calendar"
-                ? "min-w-[220px] max-w-[min(280px,calc(100vw-2rem))] p-1.5"
+                ? "min-w-[236px] max-w-[min(296px,calc(100vw-2rem))] p-1.5"
                 : undefined
             }
             trigger={
@@ -305,32 +324,32 @@ export function TaskEditorPanel({
                     }
                   }}
                   defaultMonth={task.scheduledDate ? new Date(task.scheduledDate) : new Date()}
-                  className="w-full max-w-[min(260px,calc(100vw-2rem))] !bg-transparent !p-0 [--cell-size:2rem]"
+                  className="w-full max-w-[min(276px,calc(100vw-2rem))] !bg-transparent !p-0 [--cell-size:2rem]"
                   modifiersClassNames={{
                     today:
                       "[&_button:not([data-selected-single=true])]:bg-app-accent [&_button:not([data-selected-single=true])]:text-white [&_button:not([data-selected-single=true])]:hover:bg-app-accent/90",
                     selected:
-                      "[&_button]:z-[1] [&_button]:ring-2 [&_button]:ring-white/25 [&_button]:ring-offset-0",
+                      "[&_button]:z-[1]",
                   }}
                   classNames={{
                     months: "flex w-full flex-col gap-0",
                     month: "relative w-full gap-1 p-0",
                     month_caption:
-                      "relative mb-0 flex h-8 w-full shrink-0 items-center justify-start px-9",
+                      "relative mb-0 flex h-8 w-full shrink-0 items-center justify-center px-0",
                     caption_label:
-                      "w-full text-left text-sm font-semibold tracking-tight text-text",
+                      "w-full text-center text-sm font-semibold tracking-tight text-text",
                     button_previous:
                       "absolute left-0 top-0 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-md p-0 text-text-muted opacity-80 transition-colors hover:bg-surface-2 hover:opacity-100 aria-disabled:opacity-30",
                     button_next:
                       "absolute right-0 top-0 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-md p-0 text-text-muted opacity-80 transition-colors hover:bg-surface-2 hover:opacity-100 aria-disabled:opacity-30",
                     month_grid: "w-full border-collapse",
-                    weekdays: "mt-0.5 flex w-full",
+                    weekdays: "mt-1.5 flex w-full justify-between",
                     weekday:
-                      "flex-1 select-none text-center text-[0.65rem] font-medium uppercase tracking-wide text-text-muted",
-                    week: "mt-0.5 flex w-full",
-                    day: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20",
+                      "inline-flex size-6 shrink-0 select-none items-center justify-center text-center text-[0.65rem] font-medium uppercase tracking-wide text-text-muted",
+                    week: "mt-1.5 flex w-full justify-between",
+                    day: "relative p-0 text-center text-[12px] focus-within:relative focus-within:z-20",
                     day_button:
-                      "size-8 min-h-8 min-w-8 rounded-md p-0 font-normal text-text hover:bg-surface-2 data-[selected-single=true]:!bg-app-accent data-[selected-single=true]:!text-white data-[selected-single=true]:hover:!bg-app-accent",
+                      "size-6 min-h-6 min-w-6 rounded-md p-0 font-normal text-text hover:bg-surface-2 data-[selected-single=true]:!bg-surface-2 data-[selected-single=true]:!text-text data-[selected-single=true]:hover:!bg-surface-2",
                     today: "bg-transparent p-0",
                     selected: "bg-transparent",
                     outside: "text-text-faint opacity-45 aria-selected:opacity-100",
@@ -641,12 +660,15 @@ function TagAutocomplete({
   const [isOpen, setIsOpen] = useState(false)
   const [highlightIndex, setHighlightIndex] = useState(0)
   const [tagVisible, setTagVisible] = useState(false)
+  const [tagRenderPortal, setTagRenderPortal] = useState(false)
   const [tagPos, setTagPos] = useState<{ top: number; left: number } | null>(
     null
   )
+  const tagExitHandledRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const tagTriggerRef = useRef<HTMLDivElement>(null)
+  const reducedMotionTags = usePrefersReducedMotion()
 
   const filtered =
     query.length > 0
@@ -662,15 +684,35 @@ function TagAutocomplete({
       setHighlightIndex(Math.max(0, totalItems - 1))
   }, [totalItems, highlightIndex])
 
+  const suggestionsOpen = isOpen && totalItems > 0
+
   useEffect(() => {
-    if (isOpen && tagTriggerRef.current) {
+    if (suggestionsOpen && tagTriggerRef.current) {
       const rect = tagTriggerRef.current.getBoundingClientRect()
       setTagPos({ top: rect.bottom + 8, left: rect.left })
-      requestAnimationFrame(() => setTagVisible(true))
+      setTagRenderPortal(true)
+      tagExitHandledRef.current = false
+      if (reducedMotionTags) setTagVisible(true)
+      else requestAnimationFrame(() => setTagVisible(true))
     } else {
-      setTagVisible(false)
+      if (reducedMotionTags) {
+        setTagVisible(false)
+        setTagRenderPortal(false)
+        setTagPos(null)
+      } else {
+        setTagVisible(false)
+      }
     }
-  }, [isOpen])
+  }, [suggestionsOpen, reducedMotionTags])
+
+  useEffect(() => {
+    if (suggestionsOpen || tagVisible || !tagRenderPortal || reducedMotionTags) return
+    const t = window.setTimeout(() => {
+      setTagRenderPortal(false)
+      setTagPos(null)
+    }, DROPDOWN_CLOSE_MS + 100)
+    return () => clearTimeout(t)
+  }, [suggestionsOpen, tagVisible, tagRenderPortal, reducedMotionTags])
 
   function selectTag(name: string) {
     setQuery(name)
@@ -768,12 +810,14 @@ function TagAutocomplete({
         )}
       </div>
 
-      {isOpen &&
-        totalItems > 0 &&
+      {tagRenderPortal &&
         tagPos &&
         createPortal(
           <div
-            className="fixed z-[100] min-w-[240px] rounded-xl border border-border/50 bg-background p-1 shadow-lg motion-reduce:transition-none"
+            className={cn(
+              "fixed z-[100] min-w-[240px] rounded-xl border border-border/50 bg-background p-1 shadow-lg",
+              reducedMotionTags && "transition-none"
+            )}
             style={{
               top: tagPos.top,
               left: tagPos.left,
@@ -781,12 +825,22 @@ function TagAutocomplete({
               transform: tagVisible
                 ? "translateY(0) scale(1)"
                 : "translateY(-4px) scale(0.98)",
-              transition: tagVisible
-                ? "opacity 150ms ease-out, transform 150ms ease-out"
-                : "opacity 100ms ease-in, transform 100ms ease-in",
+              transition: reducedMotionTags
+                ? "none"
+                : tagVisible
+                  ? `opacity ${DROPDOWN_OPEN_MS}ms ${DROPDOWN_EASE_OUT}, transform ${DROPDOWN_OPEN_MS}ms ${DROPDOWN_EASE_OUT}`
+                  : `opacity ${DROPDOWN_CLOSE_MS}ms ${DROPDOWN_EASE_OUT}, transform ${DROPDOWN_CLOSE_MS}ms ${DROPDOWN_EASE_OUT}`,
               transformOrigin: "top left",
             }}
             onMouseDown={(e) => e.preventDefault()}
+            onTransitionEnd={(e) => {
+              if (e.propertyName !== "opacity" && e.propertyName !== "transform") return
+              if (tagExitHandledRef.current) return
+              if (suggestionsOpen || tagVisible) return
+              tagExitHandledRef.current = true
+              setTagRenderPortal(false)
+              setTagPos(null)
+            }}
           >
             {filtered.map((tag, i) => (
               <button
@@ -855,6 +909,9 @@ function DropdownField({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const [visible, setVisible] = useState(false)
+  const [renderPortal, setRenderPortal] = useState(false)
+  const exitHandledRef = useRef(false)
+  const reducedMotion = usePrefersReducedMotion()
 
   const computePos = useCallback(() => {
     if (!triggerRef.current) return
@@ -867,11 +924,38 @@ function DropdownField({
   useEffect(() => {
     if (isOpen) {
       computePos()
-      requestAnimationFrame(() => setVisible(true))
+      setRenderPortal(true)
+      exitHandledRef.current = false
+      if (reducedMotion) setVisible(true)
+      else requestAnimationFrame(() => setVisible(true))
     } else {
-      setVisible(false)
+      if (reducedMotion) {
+        setVisible(false)
+        setRenderPortal(false)
+        setPos(null)
+      } else {
+        setVisible(false)
+      }
     }
-  }, [isOpen, computePos, layoutKey])
+  }, [isOpen, computePos, layoutKey, reducedMotion])
+
+  useEffect(() => {
+    if (isOpen || visible || !renderPortal || reducedMotion) return
+    const t = window.setTimeout(() => {
+      setRenderPortal(false)
+      setPos(null)
+    }, DROPDOWN_CLOSE_MS + 100)
+    return () => clearTimeout(t)
+  }, [isOpen, visible, renderPortal, reducedMotion])
+
+  function handlePanelTransitionEnd(e: React.TransitionEvent<HTMLDivElement>) {
+    if (e.propertyName !== "opacity" && e.propertyName !== "transform") return
+    if (exitHandledRef.current) return
+    if (isOpen || visible) return
+    exitHandledRef.current = true
+    setRenderPortal(false)
+    setPos(null)
+  }
 
   return (
     <div>
@@ -886,12 +970,13 @@ function DropdownField({
         {trigger}
       </button>
 
-      {isOpen &&
+      {renderPortal &&
         pos &&
         createPortal(
           <div
             className={cn(
-              "fixed z-[100] min-w-[240px] rounded-xl border border-border/50 bg-background p-1 shadow-lg motion-reduce:transition-none",
+              "fixed z-[100] min-w-[240px] rounded-xl border border-border/50 bg-background p-1 shadow-lg",
+              reducedMotion && "transition-none",
               panelClassName
             )}
             style={{
@@ -905,12 +990,15 @@ function DropdownField({
                 : openUp
                   ? "translateY(4px) scale(0.98)"
                   : "translateY(-4px) scale(0.98)",
-              transition: visible
-                ? "opacity 150ms ease-out, transform 150ms ease-out"
-                : "opacity 100ms ease-in, transform 100ms ease-in",
+              transition: reducedMotion
+                ? "none"
+                : visible
+                  ? `opacity ${DROPDOWN_OPEN_MS}ms ${DROPDOWN_EASE_OUT}, transform ${DROPDOWN_OPEN_MS}ms ${DROPDOWN_EASE_OUT}`
+                  : `opacity ${DROPDOWN_CLOSE_MS}ms ${DROPDOWN_EASE_OUT}, transform ${DROPDOWN_CLOSE_MS}ms ${DROPDOWN_EASE_OUT}`,
               transformOrigin: openUp ? "bottom left" : "top left",
             }}
             onClick={(e) => e.stopPropagation()}
+            onTransitionEnd={handlePanelTransitionEnd}
           >
             {children}
           </div>,

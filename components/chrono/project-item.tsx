@@ -51,7 +51,7 @@ export function ProjectItem({
     <div
       className={cn(
         "group flex w-full items-center rounded px-2 py-1 text-sm cursor-pointer transition-colors",
-        isRenaming ? "bg-transparent" : isActive ? "bg-faint" : "hover:bg-surface-2/30"
+        isRenaming ? "bg-transparent" : isActive ? "bg-faint" : ""
       )}
       onClick={handleRowClick}
     >
@@ -88,7 +88,7 @@ export function ProjectItem({
               className="min-w-0 flex-1 truncate bg-transparent text-sm font-medium text-text outline-none placeholder:text-text-muted"
             />
           ) : (
-            <span className="truncate text-text">{label}</span>
+            <span className="truncate text-text/80 transition-colors duration-150 group-hover:text-text">{label}</span>
           )}
           {count !== undefined && (
             <span className="shrink-0 text-[11px] text-text-faint tabular-nums">{count}</span>
