@@ -1,26 +1,31 @@
 "use client"
 
-import { useState, useCallback, useMemo, useEffect } from "react"
+import { useState, useCallback, useMemo, useEffect, type MouseEvent as ReactMouseEvent } from "react"
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { startOfWeek, addDays, addWeeks, startOfDay, format, parseISO } from "date-fns"
-import { AppSidebar } from "@/components/chrono/sidebar"
-import { TopBar, type AppMode } from "@/components/chrono/top-bar"
-import { AccountPanel } from "@/components/chrono/account-panel"
-import { CalendarGrid } from "@/components/chrono/calendar-grid"
-import { CommandBar } from "@/components/chrono/command-bar"
-import { CanvasBoard, type CanvasItem, type CanvasProject } from "@/components/chrono/canvas-board"
-import { CanvasSidebar } from "../components/chrono/canvas-sidebar"
-import { CanvasCommandBar } from "@/components/chrono/canvas-command-bar"
-import { SEED_TAGS } from "@/components/chrono/task-editor-modal"
-import type { DragCreatePayload, EventMovePayload, EventResizePayload, SidebarTaskDropPayload } from "@/components/chrono/calendar-grid"
+import { AppSidebar } from "@/components/cadence/sidebar"
+import { TopBar, type AppMode } from "@/components/cadence/top-bar"
+import { AccountPanel } from "@/components/cadence/account-panel"
+import { CalendarGrid } from "@/components/cadence/calendar-grid"
+import { CommandBar } from "@/components/cadence/command-bar"
+import { CanvasBoard, type CanvasItem, type CanvasProject } from "@/components/cadence/canvas-board"
+import { CanvasSidebar } from "../components/cadence/canvas-sidebar"
+import { CanvasCommandBar } from "@/components/cadence/canvas-command-bar"
+import { SEED_TAGS } from "@/components/cadence/task-editor-modal"
+import {
+  getVisibleAllTabTaskOrder,
+  getVisibleCompletedTabTaskOrder,
+} from "@/components/cadence/sidebar-visible-order"
+import { CADENCE_EASE_SLIDE, SIDEBAR_DISCLOSURE_DURATION_S } from "@/lib/cadence-motion"
+import type { DragCreatePayload, EventMovePayload, EventResizePayload, SidebarTaskDropPayload } from "@/components/cadence/calendar-grid"
 import type {
   TaskEditorInitialData,
   TaskEditorSaveData,
   EditingTaskData,
   TaskAssignee,
-} from "@/components/chrono/task-editor-modal"
+} from "@/components/cadence/task-editor-modal"
 
-export type { TaskAssignee } from "@/components/chrono/task-editor-modal"
+export type { TaskAssignee } from "@/components/cadence/task-editor-modal"
 
 export interface Task {
   id: string
@@ -54,7 +59,7 @@ const INITIAL_CANVAS_PROJECTS: CanvasProject[] = [
   },
   {
     id: "p1",
-    name: "Credit Products & Agency Banking",
+    name: "Credit Products",
     color: "#f97316",
     items: [
       {
@@ -98,8 +103,8 @@ const INITIAL_CANVAS_PROJECTS: CanvasProject[] = [
     ],
   },
   {
-    id: "p2",
-    name: "Non-Credit Products",
+    id: "web",
+    name: "Web",
     color: "#3b82f6",
     items: [
       {
@@ -119,46 +124,60 @@ const INITIAL_CANVAS_PROJECTS: CanvasProject[] = [
     color: "#a855f7",
     items: [],
   },
-  {
-    id: "p4",
-    name: "Internet Bank",
-    color: "#22c55e",
-    items: [],
-  },
-  {
-    id: "p5",
-    name: "Identity Squad",
-    color: "#ec4899",
-    items: [],
-  },
-  {
-    id: "p6",
-    name: "Bill Payments",
-    color: "#eab308",
-    items: [],
-  },
 ]
 
 const SEED_PROJECT_IDS = new Set(INITIAL_CANVAS_PROJECTS.map((p) => p.id))
 
-/** Merge stored projects with the seed list: exact seed order/names, keep user canvas `items` / colors when present; append non-seed projects at the end. */
+/** Removed / legacy canvas project ids → canonical seed id (tasks + active project). */
+const LEGACY_PROJECT_ID_MAP: Record<string, string> = {
+  p2: "web",
+  p4: "web",
+  p5: "general",
+  p6: "general",
+}
+
+/** Legacy display names from stored tasks → canonical project id. */
+const PROJECT_LEGACY_NAME_ALIASES: readonly [string, string][] = [
+  ["Credit Products & Agency Banking", "p1"],
+  ["Non-Credit Products", "web"],
+  ["Internet Bank", "web"],
+  ["Identity Squad", "general"],
+  ["Bill Payments", "general"],
+]
+
+function normalizeStoredProjectId(raw: string | undefined): string {
+  const id = (raw ?? "general").trim() || "general"
+  if (SEED_PROJECT_IDS.has(id)) return id
+  return LEGACY_PROJECT_ID_MAP[id] ?? "general"
+}
+
+/** Merge stored projects with the canonical four: seed order/names, keep `items` / colors when present; drop non-seed projects (canvas items merged into Web). */
 function mergeCanvasProjectsWithSeed(projects: CanvasProject[]): CanvasProject[] {
   const byId = new Map(projects.map((p) => [p.id, p]))
-  const ordered: CanvasProject[] = []
-  for (const seed of INITIAL_CANVAS_PROJECTS) {
+  const orphanItems: CanvasItem[] = []
+  for (const p of projects) {
+    if (!SEED_PROJECT_IDS.has(p.id)) {
+      for (const item of p.items ?? []) orphanItems.push(item)
+    }
+  }
+
+  return INITIAL_CANVAS_PROJECTS.map((seed) => {
     const existing = byId.get(seed.id)
-    ordered.push({
+    const baseItems = Array.isArray(existing?.items) ? existing.items : seed.items
+    const items =
+      seed.id === "web" && orphanItems.length > 0 ? [...baseItems, ...orphanItems] : baseItems
+
+    if (!existing) {
+      return { ...seed, items }
+    }
+    return {
       ...seed,
       ...existing,
       name: seed.name,
-      color: existing?.color ?? seed.color,
-      items: Array.isArray(existing?.items) ? existing.items : seed.items,
-    })
-  }
-  for (const p of projects) {
-    if (!SEED_PROJECT_IDS.has(p.id)) ordered.push(p)
-  }
-  return ordered
+      color: existing.color ?? seed.color,
+      items,
+    }
+  })
 }
 
 const STORAGE_KEYS = {
@@ -185,12 +204,12 @@ const sidebarShellSlideVariants = {
 }
 
 const sidebarShellSlideTransition = {
-  duration: 0.2,
-  ease: [0.2, 0.8, 0.2, 1] as const,
+  duration: SIDEBAR_DISCLOSURE_DURATION_S,
+  ease: CADENCE_EASE_SLIDE,
 }
 
-// Chrono App
-export default function ChronoApp() {
+// Cadence App
+export default function CadenceApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [pendingOpen, setPendingOpen] = useState<TaskEditorInitialData | null>(null)
   const [editingTask, setEditingTask] = useState<EditingTaskData | null>(null)
@@ -211,6 +230,8 @@ export default function ChronoApp() {
     clientWidth: number
     clientHeight: number
   } | null>(null)
+  const [sidebarSelectedTaskIds, setSidebarSelectedTaskIds] = useState<string[]>([])
+  const [sidebarSelectionAnchorId, setSidebarSelectionAnchorId] = useState<string | null>(null)
   const [sidebarShellDirection, setSidebarShellDirection] = useState<1 | -1>(1)
   const shouldReduceMotion = useReducedMotion()
   const sidebarShellTransition = shouldReduceMotion
@@ -244,6 +265,117 @@ export default function ChronoApp() {
     return counts
   }, [tasks])
 
+  const visibleAllTabTaskOrder = useMemo(
+    () => getVisibleAllTabTaskOrder(tasks, canvasProjects),
+    [tasks, canvasProjects]
+  )
+  const visibleCompletedTabTaskOrder = useMemo(
+    () => getVisibleCompletedTabTaskOrder(tasks),
+    [tasks]
+  )
+
+  const clearSidebarTaskSelection = useCallback(() => {
+    setSidebarSelectedTaskIds([])
+    setSidebarSelectionAnchorId(null)
+  }, [])
+
+  const handleSidebarTaskRowClick = useCallback(
+    (taskId: string, e: ReactMouseEvent, tab: "all" | "completed") => {
+      const order = tab === "all" ? visibleAllTabTaskOrder : visibleCompletedTabTaskOrder
+      if (e.shiftKey && sidebarSelectionAnchorId) {
+        const ia = order.indexOf(sidebarSelectionAnchorId)
+        const ib = order.indexOf(taskId)
+        if (ia === -1 || ib === -1) {
+          setSidebarSelectedTaskIds([taskId])
+          setSidebarSelectionAnchorId(taskId)
+          return
+        }
+        const lo = Math.min(ia, ib)
+        const hi = Math.max(ia, ib)
+        setSidebarSelectedTaskIds(order.slice(lo, hi + 1))
+        return
+      }
+      setSidebarSelectedTaskIds([taskId])
+      setSidebarSelectionAnchorId(taskId)
+    },
+    [visibleAllTabTaskOrder, visibleCompletedTabTaskOrder, sidebarSelectionAnchorId]
+  )
+
+  const handleBulkMarkDone = useCallback(() => {
+    const idSet = new Set(sidebarSelectedTaskIds)
+    setTasks((prev) => prev.map((t) => (idSet.has(t.id) ? { ...t, completed: true } : t)))
+    clearSidebarTaskSelection()
+  }, [sidebarSelectedTaskIds, clearSidebarTaskSelection])
+
+  const handleBulkDelete = useCallback(() => {
+    const ids = sidebarSelectedTaskIds.filter((id) => tasks.some((t) => t.id === id))
+    if (ids.length === 0) {
+      clearSidebarTaskSelection()
+      return
+    }
+    if (ids.length > 1) {
+      const ok = window.confirm(`Delete ${ids.length} tasks?`)
+      if (!ok) return
+    }
+    const idSet = new Set(ids)
+    setTasks((prev) => prev.filter((t) => !idSet.has(t.id)))
+    clearSidebarTaskSelection()
+  }, [sidebarSelectedTaskIds, tasks, clearSidebarTaskSelection])
+
+  const handleBulkProject = useCallback(
+    (projectId: string) => {
+      const project =
+        canvasProjects.find((p) => p.id === projectId) ??
+        canvasProjects.find((p) => p.id === "general") ??
+        null
+      if (!project) return
+      const idSet = new Set(sidebarSelectedTaskIds)
+      setTasks((prev) =>
+        prev.map((t) =>
+          idSet.has(t.id)
+            ? {
+                ...t,
+                projectId: project.id,
+                tag: project.name,
+                tagColor: project.color ?? t.tagColor,
+              }
+            : t
+        )
+      )
+      clearSidebarTaskSelection()
+    },
+    [sidebarSelectedTaskIds, canvasProjects, clearSidebarTaskSelection]
+  )
+
+  const handleBulkPriority = useCallback(
+    (priority: string) => {
+      const idSet = new Set(sidebarSelectedTaskIds)
+      setTasks((prev) =>
+        prev.map((t) => (idSet.has(t.id) ? { ...t, priority } : t))
+      )
+      clearSidebarTaskSelection()
+    },
+    [sidebarSelectedTaskIds, clearSidebarTaskSelection]
+  )
+
+  useEffect(() => {
+    if (editingTask) clearSidebarTaskSelection()
+  }, [editingTask, clearSidebarTaskSelection])
+
+  useEffect(() => {
+    if (pendingOpen) clearSidebarTaskSelection()
+  }, [pendingOpen, clearSidebarTaskSelection])
+
+  useEffect(() => {
+    if (sidebarCollapsed) clearSidebarTaskSelection()
+  }, [sidebarCollapsed, clearSidebarTaskSelection])
+
+  useEffect(() => {
+    if (appMode !== "schedule" || sidebarView !== "tasks") {
+      clearSidebarTaskSelection()
+    }
+  }, [appMode, sidebarView, clearSidebarTaskSelection])
+
   // ─── Hydrate state from localStorage on first mount ─────────────────────
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -254,7 +386,6 @@ export default function ChronoApp() {
         {
           id: "general",
           name: "Daily Banking",
-          icon: "folder",
           color: "#94a3b8",
           items: [],
         },
@@ -285,28 +416,16 @@ export default function ChronoApp() {
     )
     let nextTasks = (storedTasks ?? []) as Task[]
 
-    // Migrate legacy tag-based tasks → projectId
+    const nameToProjectId = new Map<string, string>()
+    for (const [label, id] of PROJECT_LEGACY_NAME_ALIASES) {
+      nameToProjectId.set(label.trim().toLowerCase(), id)
+    }
+    for (const p of nextProjects) {
+      nameToProjectId.set(p.name.trim().toLowerCase(), p.id)
+    }
+
+    // Migrate legacy tag-based tasks → projectId (canonical four only; unknown → Daily Banking)
     if (nextTasks.length > 0) {
-      const nameToProjectId = new Map(
-        nextProjects.map((p) => [p.name.trim().toLowerCase(), p.id] as const)
-      )
-
-      const maybeCreateProjectFromTag = (tagName: string, color?: string) => {
-        const key = tagName.trim().toLowerCase()
-        const existing = nameToProjectId.get(key)
-        if (existing) return existing
-        const id = crypto.randomUUID()
-        const proj: CanvasProject = {
-          id,
-          name: tagName.trim(),
-          color: typeof color === "string" && color.startsWith("#") ? color : "#94a3b8",
-          items: [],
-        }
-        nextProjects = [...nextProjects, proj]
-        nameToProjectId.set(key, id)
-        return id
-      }
-
       nextTasks = nextTasks.map((t) => {
         const assignee: TaskAssignee =
           t.assignee === "tazo" || t.assignee === "mebo" ? t.assignee : ""
@@ -320,12 +439,27 @@ export default function ChronoApp() {
               : undefined,
         }
         const { repeat: _dropRepeat, ...rest } = withMeta as typeof withMeta & { repeat?: string }
-        if (rest.projectId) return rest as Task
-        const tag = (rest.tag ?? "").trim()
-        if (!tag) return { ...rest, projectId: "general" } as Task
-        const match = nameToProjectId.get(tag.toLowerCase())
-        const projectId = match ?? maybeCreateProjectFromTag(tag, rest.tagColor)
-        return { ...rest, projectId } as Task
+        let withProject = rest as Task
+        if (!withProject.projectId) {
+          const tag = (withProject.tag ?? "").trim()
+          if (!tag) withProject = { ...withProject, projectId: "general" }
+          else {
+            const match = nameToProjectId.get(tag.toLowerCase())
+            withProject = { ...withProject, projectId: match ?? "general" }
+          }
+        }
+        return withProject
+      })
+
+      nextTasks = nextTasks.map((t) => {
+        const pid = normalizeStoredProjectId(t.projectId)
+        const proj = nextProjects.find((p) => p.id === pid)
+        return {
+          ...t,
+          projectId: pid,
+          tag: proj?.name ?? t.tag,
+          tagColor: proj?.color ?? t.tagColor,
+        }
       })
     }
 
@@ -353,8 +487,9 @@ export default function ChronoApp() {
     try {
       const storedActiveId = window.localStorage.getItem(STORAGE_KEYS.activeProjectId)
       if (storedActiveId) {
-        const exists = nextProjects.some((p) => p.id === storedActiveId)
-        if (exists) setActiveProjectId(storedActiveId)
+        const normalized = normalizeStoredProjectId(storedActiveId)
+        const exists = nextProjects.some((p) => p.id === normalized)
+        if (exists) setActiveProjectId(normalized)
       }
     } catch {
       // ignore
@@ -800,23 +935,6 @@ export default function ChronoApp() {
     },
     [activeProjectId, tasks]
   )
-  const handleAddProject = useCallback((name?: string, color?: string) => {
-    setCanvasProjects((prev) => {
-      const id = crypto.randomUUID()
-      const displayName = name?.trim() || `New project ${prev.length + 1}`
-      const next = [
-        ...prev,
-        {
-          id,
-          name: displayName,
-          color: color ?? "#94a3b8",
-          items: [],
-        },
-      ]
-      setActiveProjectId(id)
-      return next
-    })
-  }, [])
 
   const handleAddCanvasNote = useCallback(() => {
     if (!activeCanvasProject || !canvasViewport) return
@@ -916,7 +1034,6 @@ export default function ChronoApp() {
                 onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
                 tasks={tasks}
                 projects={canvasProjects}
-                onAddProject={handleAddProject}
                 onUpdateProject={handleCanvasProjectUpdate}
                 onDeleteProject={handleCanvasProjectDelete}
                 onToggleComplete={handleToggleComplete}
@@ -928,6 +1045,9 @@ export default function ChronoApp() {
                 appMode={appMode}
                 sidebarView={sidebarView}
                 onSidebarModeClick={handleSidebarModeClick}
+                selectedTaskIds={sidebarSelectedTaskIds}
+                onSidebarTaskRowClick={handleSidebarTaskRowClick}
+                onSidebarTasksTabChange={clearSidebarTaskSelection}
               />
             </motion.div>
           ) : (
@@ -947,7 +1067,6 @@ export default function ChronoApp() {
                 projectTaskCounts={taskCountByProjectId}
                 activeProjectId={activeCanvasProject?.id ?? null}
                 onSelectProject={setActiveProjectId}
-                onAddProject={handleAddProject}
                 onUpdateProject={handleCanvasProjectUpdate}
                 onDeleteProject={handleCanvasProjectDelete}
                 onQuickAddTask={handleSidebarQuickAdd}
@@ -985,6 +1104,19 @@ export default function ChronoApp() {
               onPrevWeek={handlePrevWeek}
               onNextWeek={handleNextWeek}
               projects={canvasProjects}
+              onEditorOpen={clearSidebarTaskSelection}
+              bulkSelection={
+                sidebarView === "tasks" && sidebarSelectedTaskIds.length > 0
+                  ? {
+                      count: sidebarSelectedTaskIds.length,
+                      onExit: clearSidebarTaskSelection,
+                      onDone: handleBulkMarkDone,
+                      onDelete: handleBulkDelete,
+                      onProject: handleBulkProject,
+                      onPriority: handleBulkPriority,
+                    }
+                  : null
+              }
             />
           </div>
         ) : (

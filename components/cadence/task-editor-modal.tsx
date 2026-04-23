@@ -1,8 +1,14 @@
 "use client"
 
-import React, { useEffect, useRef, useState, useCallback, useSyncExternalStore } from "react"
+import React, { useEffect, useRef, useState, useCallback } from "react"
 import { createPortal } from "react-dom"
+import { useReducedMotion } from "framer-motion"
 import { cn } from "@/lib/utils"
+import {
+  CADENCE_EASE_OUT_CSS,
+  DROPDOWN_CLOSE_MS,
+  DROPDOWN_OPEN_MS,
+} from "@/lib/cadence-motion"
 import { User, CornerDownLeft, Tag } from "lucide-react"
 import { Calendar } from "@/components/ui/calendar"
 import { format, startOfDay } from "date-fns"
@@ -53,7 +59,7 @@ const quickWhenOptions = [
 
 const PICK_DATE_ICON = "/icons/due-soon.svg"
 
-const priorityOptions = [
+export const priorityOptions = [
   { value: "high", label: "High", icon: "high.svg" },
   { value: "medium", label: "Medium", icon: "medium.svg" },
   { value: "low", label: "Low", icon: "low.svg" },
@@ -78,24 +84,7 @@ function IconImg({ src, className }: { src: string; className?: string }) {
   return <img src={src} alt="" className={cn("h-4 w-4 shrink-0", className)} />
 }
 
-/** Task editor dropdown panels: ease-out enter/leave; exit ~20% faster than open (animations.dev-style). */
-const DROPDOWN_OPEN_MS = 180
-const DROPDOWN_CLOSE_MS = 140
-const DROPDOWN_EASE_OUT = "cubic-bezier(0.165, 0.84, 0.44, 1)"
-
-function subscribePrefersReducedMotion(callback: () => void) {
-  const mq = window.matchMedia("(prefers-reduced-motion: reduce)")
-  mq.addEventListener("change", callback)
-  return () => mq.removeEventListener("change", callback)
-}
-
-function usePrefersReducedMotion(): boolean {
-  return useSyncExternalStore(
-    subscribePrefersReducedMotion,
-    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-    () => false
-  )
-}
+const DROPDOWN_EASE_OUT = CADENCE_EASE_OUT_CSS
 
 export interface TaskEditorInitialData {
   dayIndex?: number
@@ -573,7 +562,7 @@ export function TaskEditorPanel({
           {/* Discard button (4px radius) */}
           <button
             onClick={onClose}
-            className="flex items-center gap-1.5 rounded border border-border/50 bg-surface-2 px-4 py-2 text-xs font-medium text-text shadow-sm transition-colors hover:bg-surface"
+            className="flex items-center gap-1.5 rounded border border-border/50 bg-surface px-4 py-2 text-xs font-medium text-text shadow-sm transition-colors hover:bg-surface-2"
           >
             Discard
             <kbd className="ml-1 rounded border border-border/50 bg-background/40 px-1.5 py-0.5 text-[10px] font-medium text-text-faint">
@@ -668,7 +657,7 @@ function TagAutocomplete({
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const tagTriggerRef = useRef<HTMLDivElement>(null)
-  const reducedMotionTags = usePrefersReducedMotion()
+  const reducedMotionTags = useReducedMotion() ?? false
 
   const filtered =
     query.length > 0
@@ -815,7 +804,7 @@ function TagAutocomplete({
         createPortal(
           <div
             className={cn(
-              "fixed z-[100] min-w-[240px] rounded-xl border border-border/50 bg-background p-1 shadow-lg",
+              "fixed z-[100] min-w-[200px] rounded-xl border border-border/50 bg-background p-1 shadow-lg",
               reducedMotionTags && "transition-none"
             )}
             style={{
@@ -911,7 +900,7 @@ function DropdownField({
   const [visible, setVisible] = useState(false)
   const [renderPortal, setRenderPortal] = useState(false)
   const exitHandledRef = useRef(false)
-  const reducedMotion = usePrefersReducedMotion()
+  const reducedMotion = useReducedMotion() ?? false
 
   const computePos = useCallback(() => {
     if (!triggerRef.current) return
@@ -975,7 +964,7 @@ function DropdownField({
         createPortal(
           <div
             className={cn(
-              "fixed z-[100] min-w-[240px] rounded-xl border border-border/50 bg-background p-1 shadow-lg",
+              "fixed z-[100] min-w-[200px] rounded-xl border border-border/50 bg-background p-1 shadow-lg",
               reducedMotion && "transition-none",
               panelClassName
             )}

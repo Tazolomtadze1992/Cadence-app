@@ -2,6 +2,13 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { createPortal } from "react-dom"
+import { useReducedMotion } from "framer-motion"
+import {
+  CADENCE_EASE_OUT_CSS,
+  POPOVER_ENTER_MS,
+  POPOVER_EXIT_MS,
+  POPOVER_HIDE_MS,
+} from "@/lib/cadence-motion"
 import { startOfWeek, addDays, isToday, getDate, format } from "date-fns"
 import {
   Check,
@@ -16,9 +23,9 @@ import {
   Layout,
   Image as ImageIcon,
 } from "lucide-react"
-import { PriorityIcon } from "@/components/chrono/sidebar"
-import { formatAssigneeLabel } from "@/components/chrono/assignee-utils"
-import type { TaskAssignee } from "@/components/chrono/task-editor-modal"
+import { PriorityIcon } from "@/components/cadence/sidebar"
+import { formatAssigneeLabel } from "@/components/cadence/assignee-utils"
+import type { TaskAssignee } from "@/components/cadence/task-editor-modal"
 import { cn } from "@/lib/utils"
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -104,8 +111,14 @@ type PopoverState = {
   visible: boolean
 } | null
 
-const ZONE_THRESHOLD = 0.65
-const POPOVER_HIDE_MS = 300
+/** First visit to a card: split top vs bottom. */
+const ZONE_SPLIT_DEFAULT = 0.65
+/** While treating pointer as "top", require this far down before switching to bottom (hysteresis). */
+const ZONE_LEAVE_TOP = 0.78
+/** While in bottom, require moving this far up before top again. */
+const ZONE_ENTER_TOP = 0.55
+
+const BOTTOM_ZONE_HIDE_DELAY_MS = 100
 
 function getEventPosition(startMinutes: number, endMinutes: number) {
   const minutesFromStart = startMinutes - MIN_MINUTES
@@ -124,6 +137,110 @@ function getCreateRange(drag: Extract<DragState, { type: "create" }>) {
   end = clampMinutes(end)
   if (end <= start) end = start + SNAP
   return { startMinutes: start, endMinutes: end }
+}
+
+function CalendarEventDetailPopover({
+  popover,
+  ev,
+  dayDate,
+  durationMinutes,
+  reduceMotion,
+}: {
+  popover: NonNullable<PopoverState>
+  ev: CalendarEvent
+  dayDate: Date | undefined
+  durationMinutes: number
+  reduceMotion: boolean
+}) {
+  const [entered, setEntered] = useState(() => reduceMotion)
+
+  useEffect(() => {
+    if (reduceMotion) {
+      setEntered(true)
+      return
+    }
+    setEntered(false)
+    let raf1 = 0
+    let raf2 = 0
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => setEntered(true))
+    })
+    return () => {
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
+    }
+  }, [ev.id, reduceMotion])
+
+  const motionOpen = popover.visible && (reduceMotion || entered)
+  const transitionMs = motionOpen ? POPOVER_ENTER_MS : POPOVER_EXIT_MS
+
+  return createPortal(
+    <div
+      className={cn(
+        "pointer-events-none fixed z-50 w-[280px] rounded-xl border border-border/40 bg-surface/95 p-4 shadow-xl backdrop-blur-sm",
+        !reduceMotion &&
+          "transform-gpu motion-reduce:transition-none motion-reduce:duration-0"
+      )}
+      style={{
+        top: popover.pos.top,
+        left: popover.pos.left,
+        opacity: motionOpen ? 1 : 0,
+        transform: `translateX(-100%) translateY(${motionOpen ? 0 : 4}px)`,
+        transition: reduceMotion
+          ? undefined
+          : `opacity ${transitionMs}ms ${CADENCE_EASE_OUT_CSS}, transform ${transitionMs}ms ${CADENCE_EASE_OUT_CSS}`,
+      }}
+    >
+      <div className="mb-4 flex gap-2.5">
+        <div className="mt-0.5 h-9 w-1 shrink-0 rounded-full" style={{ backgroundColor: ev.tagColor || "var(--color-app-accent)" }} />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-text">{ev.title}</p>
+          <p className="mt-0.5 truncate text-xs text-text-faint">
+            {ev.notes?.trim() ? ev.notes.trim() : "No notes yet"}
+          </p>
+        </div>
+      </div>
+
+      <div className="mb-3">
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <Calendar className="h-3.5 w-3.5 text-text-faint" />
+          <span className="text-[11px] font-medium text-text-muted">Date</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium text-text tabular-nums">
+            {dayDate ? format(dayDate, "dd/MM/yy") : ""}
+          </span>
+          <span className="text-xs text-text-faint">{dayDate ? format(dayDate, "EEE, d") : ""}</span>
+        </div>
+      </div>
+
+      <div className="mb-3">
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <Clock className="h-3.5 w-3.5 text-text-faint" />
+          <span className="text-[11px] font-medium text-text-muted">Time</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium text-text tabular-nums">
+            {formatTime12Short(ev.startMinutes!)} - {formatTime12Short(ev.endMinutes!)}
+          </span>
+          <span className="text-xs text-text-faint">{formatDuration(durationMinutes)}</span>
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <User className="h-3.5 w-3.5 text-text-faint" />
+          <span className="text-[11px] font-medium text-text-muted">Assignee</span>
+        </div>
+        <div>
+          <span className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium text-text">
+            {formatAssigneeLabel(ev.assignee)}
+          </span>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
 }
 
 export interface DragCreatePayload {
@@ -195,9 +312,13 @@ export function CalendarGrid({
   } | null>(null)
   const [sidebarDragPointer, setSidebarDragPointer] = useState<{ x: number; y: number } | null>(null)
   const [hover, setHover] = useState<HoverState | null>(null)
+  const hoverRef = useRef<HoverState | null>(null)
+  hoverRef.current = hover
   const [popover, setPopover] = useState<PopoverState>(null)
   const popoverHideTimer = useRef<number | null>(null)
+  const bottomZoneHideTimer = useRef<number | null>(null)
   const isDragging = useRef(false)
+  const reduceMotion = useReducedMotion() ?? false
   const columnRefs = useRef<(HTMLDivElement | null)[]>([])
   const gridRef = useRef<HTMLDivElement>(null)
 
@@ -267,30 +388,54 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
 
   const showPopoverNow = useCallback((eventId: string, pos: { top: number; left: number }) => {
     if (popoverHideTimer.current) window.clearTimeout(popoverHideTimer.current)
+    if (bottomZoneHideTimer.current) {
+      window.clearTimeout(bottomZoneHideTimer.current)
+      bottomZoneHideTimer.current = null
+    }
     setPopover({ eventId, pos, visible: true })
   }, [])
+
+  const scheduleHideFromBottomZone = useCallback(() => {
+    if (bottomZoneHideTimer.current) window.clearTimeout(bottomZoneHideTimer.current)
+    bottomZoneHideTimer.current = window.setTimeout(() => {
+      bottomZoneHideTimer.current = null
+      hidePopoverSoon()
+    }, BOTTOM_ZONE_HIDE_DELAY_MS)
+  }, [hidePopoverSoon])
 
   const handleEventPointerMove = useCallback(
     (e: React.PointerEvent, ev: CalendarEvent) => {
       if (isDragging.current) return
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
       const yRel = e.clientY - rect.top
-      const zone: "top" | "bottom" = yRel < rect.height * ZONE_THRESHOLD ? "top" : "bottom"
-      setHover((prev) => {
-        if (prev?.eventId === ev.id && prev.zone === zone) return prev
-        return { eventId: ev.id, zone }
-      })
+      const ratio = rect.height > 0 ? yRel / rect.height : 0
+      const prev = hoverRef.current
+      let zone: "top" | "bottom"
+      if (!prev || prev.eventId !== ev.id) {
+        zone = ratio < ZONE_SPLIT_DEFAULT ? "top" : "bottom"
+      } else if (prev.zone === "top") {
+        zone = ratio > ZONE_LEAVE_TOP ? "bottom" : "top"
+      } else {
+        zone = ratio < ZONE_ENTER_TOP ? "top" : "bottom"
+      }
+      setHover((p) => (p?.eventId === ev.id && p.zone === zone ? p : { eventId: ev.id, zone }))
+      const justEnteredBottom =
+        zone === "bottom" && (prev?.eventId !== ev.id || prev.zone !== "bottom")
       if (zone === "top") {
         showPopoverNow(ev.id, { top: rect.top, left: rect.left - 8 })
-      } else {
-        hidePopoverSoon()
+      } else if (justEnteredBottom) {
+        scheduleHideFromBottomZone()
       }
     },
-    [hidePopoverSoon, showPopoverNow]
+    [scheduleHideFromBottomZone, showPopoverNow]
   )
 
   const handleEventPointerLeave = useCallback(() => {
     if (isDragging.current) return
+    if (bottomZoneHideTimer.current) {
+      window.clearTimeout(bottomZoneHideTimer.current)
+      bottomZoneHideTimer.current = null
+    }
     setHover(null)
     hidePopoverSoon()
   }, [hidePopoverSoon])
@@ -299,6 +444,10 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
     if (!drag) return
     setHover(null)
     if (popoverHideTimer.current) window.clearTimeout(popoverHideTimer.current)
+    if (bottomZoneHideTimer.current) {
+      window.clearTimeout(bottomZoneHideTimer.current)
+      bottomZoneHideTimer.current = null
+    }
     setPopover(null)
   }, [drag])
 
@@ -312,6 +461,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
   useEffect(() => {
     return () => {
       if (popoverHideTimer.current) window.clearTimeout(popoverHideTimer.current)
+      if (bottomZoneHideTimer.current) window.clearTimeout(bottomZoneHideTimer.current)
     }
   }, [])
 
@@ -624,6 +774,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                     const isResizing = resizingEventId === ev.id
                     const isHovered = hover?.eventId === ev.id
                     const inBottomZone = isHovered && hover.zone === "bottom"
+                    const inTopHoverZone = isHovered && hover.zone === "top"
                     const showHandle = isResizing || inBottomZone
                     const { top, height } = getEventPosition(ev.startMinutes!, ev.endMinutes!)
                     const evColor = ev.tagColor || defaultColor
@@ -631,7 +782,12 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                     return (
                       <div
                         key={ev.id}
-                        className="group absolute inset-x-1 cursor-grab overflow-hidden rounded-md pl-[11px] pr-3 py-2 active:cursor-grabbing"
+                        className={cn(
+                          "group absolute inset-x-1 cursor-grab overflow-hidden rounded-md pl-[11px] pr-3 py-2 active:cursor-grabbing",
+                          !reduceMotion &&
+                            "transition-[box-shadow] duration-200 ease-[var(--cadence-ease-out)] motion-reduce:transition-none",
+                          inTopHoverZone && !isResizing && !reduceMotion && "z-[1] shadow-[0_10px_28px_rgba(0,0,0,0.22)]"
+                        )}
                         style={{ top, height, ...getEventCardStyles(evColor) }}
                         onPointerDown={(e) => handleEventPointerDown(e, ev)}
                         onPointerMove={(e) => handleEventPointerMove(e, ev)}
@@ -748,70 +904,17 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
               const ev = events.find((e) => e.id === popover.eventId)
               if (!ev || ev.startMinutes == null || ev.endMinutes == null) return null
               const dayDate = weekDates[ev.dayIndex]
-              const duration = ev.endMinutes - ev.startMinutes
+              const durationMinutes = ev.endMinutes - ev.startMinutes
 
-              return createPortal(
-                <div
-                  className={cn(
-                    "pointer-events-none fixed z-50 w-[280px] rounded-xl border border-border/40 bg-surface/95 p-4 shadow-xl backdrop-blur-sm",
-                    "transition-opacity duration-[250ms] ease-[cubic-bezier(0.4,0,0.2,1)]",
-                    popover.visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
-                  )}
-                  style={{
-                    top: popover.pos.top,
-                    left: popover.pos.left,
-                    transform: `translateX(-100%) ${popover.visible ? "translateY(0px)" : "translateY(4px)"}`,
-                  }}
-                >
-                  <div className="mb-4 flex gap-2.5">
-                    <div className="mt-0.5 h-9 w-1 shrink-0 rounded-full" style={{ backgroundColor: ev.tagColor || "var(--color-app-accent)" }} />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-text">{ev.title}</p>
-                      <p className="mt-0.5 truncate text-xs text-text-faint">
-                        {ev.notes?.trim() ? ev.notes.trim() : "No notes yet"}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mb-3">
-                    <div className="mb-1.5 flex items-center gap-1.5">
-                      <Calendar className="h-3.5 w-3.5 text-text-faint" />
-                      <span className="text-[11px] font-medium text-text-muted">Date</span>
-                    </div>
-                    <div className="flex items-center gap-2 pl-0.5">
-                      <span className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium text-text tabular-nums">
-                        {dayDate ? format(dayDate, "dd/MM/yy") : ""}
-                      </span>
-                      <span className="text-xs text-text-faint">{dayDate ? format(dayDate, "EEE, d") : ""}</span>
-                    </div>
-                  </div>
-
-                  <div className="mb-3">
-                    <div className="mb-1.5 flex items-center gap-1.5">
-                      <Clock className="h-3.5 w-3.5 text-text-faint" />
-                      <span className="text-[11px] font-medium text-text-muted">Time</span>
-                    </div>
-                    <div className="flex items-center gap-2 pl-0.5">
-                      <span className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium text-text tabular-nums">
-                        {formatTime12Short(ev.startMinutes)} - {formatTime12Short(ev.endMinutes)}
-                      </span>
-                      <span className="text-xs text-text-faint">{formatDuration(duration)}</span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="mb-1.5 flex items-center gap-1.5">
-                      <User className="h-3.5 w-3.5 text-text-faint" />
-                      <span className="text-[11px] font-medium text-text-muted">Assignee</span>
-                    </div>
-                    <div className="pl-0.5">
-                      <span className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium text-text">
-                        {formatAssigneeLabel(ev.assignee)}
-                      </span>
-                    </div>
-                  </div>
-                </div>,
-                document.body
+              return (
+                <CalendarEventDetailPopover
+                  key={popover.eventId}
+                  popover={popover}
+                  ev={ev}
+                  dayDate={dayDate}
+                  durationMinutes={durationMinutes}
+                  reduceMotion={reduceMotion}
+                />
               )
             })()}
 

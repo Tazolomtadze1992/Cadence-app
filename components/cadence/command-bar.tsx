@@ -1,12 +1,34 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react"
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useRef,
+  useMemo,
+  type ReactNode,
+  type CSSProperties,
+  type TransitionEvent,
+} from "react"
+import { createPortal } from "react-dom"
 import { motion, useReducedMotion } from "framer-motion"
-import { Plus, ChevronLeft, ChevronRight, ArrowRight, ArrowLeft } from "lucide-react"
+import { Plus, ChevronLeft, ChevronRight, ArrowRight, ArrowLeft, Check, Trash2, Layers } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { TaskEditorPanel } from "@/components/chrono/task-editor-modal"
-import type { TaskEditorInitialData, TaskEditorSaveData, EditingTaskData } from "@/components/chrono/task-editor-modal"
-import type { CanvasProject } from "@/components/chrono/canvas-board"
+import { TaskEditorPanel, priorityOptions } from "@/components/cadence/task-editor-modal"
+import type { TaskEditorInitialData, TaskEditorSaveData, EditingTaskData } from "@/components/cadence/task-editor-modal"
+import type { CanvasProject } from "@/components/cadence/canvas-board"
+import { ShortcutHintWrap } from "@/components/cadence/icon-tooltip-button"
+import {
+  CHOOSER_CLOSE_MS,
+  CHOOSER_OPEN_MS,
+  CADENCE_EASE_OUT,
+  CADENCE_EASE_OUT_CSS,
+  SHELL_CLOSE_MS,
+  SHELL_CLOSE_S,
+  SHELL_OPEN_MS,
+  SHELL_OPEN_S,
+} from "@/lib/cadence-motion"
 import {
   format,
   parse,
@@ -19,13 +41,8 @@ import {
 
 const COLLAPSED_HEIGHT = 52
 
-/** Shell motion: ease-out-quart-style; close ~20% faster than open (animations.dev-style). */
-const SHELL_EASE_OUT = [0.165, 0.84, 0.44, 1] as const
-const SHELL_OPEN_S = 0.23
-const SHELL_CLOSE_S = 0.185
-const SHELL_OPEN_MS = Math.round(SHELL_OPEN_S * 1000)
-const SHELL_CLOSE_MS = Math.round(SHELL_CLOSE_S * 1000)
-const SHELL_BEZIER_CSS = "cubic-bezier(0.165, 0.84, 0.44, 1)"
+const SHELL_BEZIER_CSS = CADENCE_EASE_OUT_CSS
+const CHOOSER_EASE_CSS = CADENCE_EASE_OUT_CSS
 
 // ─── Date Parsing ────────────────────────────────────────────────────────────
 function parseNaturalDate(input: string): Date | null {
@@ -87,6 +104,127 @@ function parseNaturalDate(input: string): Date | null {
   return null
 }
 
+export type CommandBarBulkSelection = {
+  count: number
+  onExit: () => void
+  onDone: () => void
+  onDelete: () => void
+  onProject: (projectId: string) => void
+  onPriority: (priority: string) => void
+}
+
+/** Keeps bulk strip in the layout when idle so idle ↔ bulk crossfade shares geometry (width). */
+const BULK_FACE_LAYOUT_STUB: CommandBarBulkSelection = {
+  count: 0,
+  onExit: () => {},
+  onDone: () => {},
+  onDelete: () => {},
+  onProject: () => {},
+  onPriority: () => {},
+}
+
+function BulkChooserPopover({
+  anchorRect,
+  children,
+  onClose,
+  reducedMotion,
+}: {
+  anchorRect: DOMRect
+  children: ReactNode
+  onClose: () => void
+  reducedMotion: boolean
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(reducedMotion)
+  const exitHandledRef = useRef(false)
+
+  const width = 200
+  /** Same 4px offset as task-editor `DropdownField`. */
+  const gap = 4
+  const edgePad = 8
+  const left = Math.max(edgePad, Math.min(anchorRect.left, window.innerWidth - width - edgePad))
+
+  /** Prefer opening upward (command bar sits at bottom); same geometry as `DropdownField` `openUp`. */
+  const minSpaceAbove = 100
+  const openUp = anchorRect.top >= minSpaceAbove
+  const posTop = anchorRect.top - gap
+  const posBelow = anchorRect.bottom + gap
+
+  const requestClose = useCallback(() => {
+    exitHandledRef.current = false
+    if (reducedMotion) {
+      onClose()
+      return
+    }
+    setVisible(false)
+  }, [onClose, reducedMotion])
+
+  useEffect(() => {
+    if (reducedMotion) setVisible(true)
+    else requestAnimationFrame(() => setVisible(true))
+  }, [reducedMotion])
+
+  useEffect(() => {
+    function onDocMouseDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) requestClose()
+    }
+    const t = window.setTimeout(() => document.addEventListener("mousedown", onDocMouseDown), 0)
+    return () => {
+      window.clearTimeout(t)
+      document.removeEventListener("mousedown", onDocMouseDown)
+    }
+  }, [requestClose])
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") requestClose()
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [requestClose])
+
+  function handleTransitionEnd(e: TransitionEvent<HTMLDivElement>) {
+    if (reducedMotion) return
+    if (e.propertyName !== "opacity" && e.propertyName !== "transform") return
+    if (exitHandledRef.current || visible) return
+    exitHandledRef.current = true
+    onClose()
+  }
+
+  const positionStyle: CSSProperties = openUp
+    ? { left, bottom: `calc(100vh - ${posTop}px)` }
+    : { left, top: posBelow }
+
+  const transformOrigin = openUp ? "bottom left" : "top left"
+  const hiddenTransform = openUp ? "translateY(4px) scale(0.98)" : "translateY(-4px) scale(0.98)"
+
+  return createPortal(
+    <div
+      ref={ref}
+      className={cn(
+        "fixed z-[100] max-h-[260px] w-[200px] overflow-y-auto rounded-xl border border-border/50 bg-background py-1 shadow-lg",
+        reducedMotion && "transition-none"
+      )}
+      style={{
+        ...positionStyle,
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0) scale(1)" : hiddenTransform,
+        transition: reducedMotion
+          ? "none"
+          : visible
+            ? `opacity ${CHOOSER_OPEN_MS}ms ${CHOOSER_EASE_CSS}, transform ${CHOOSER_OPEN_MS}ms ${CHOOSER_EASE_CSS}`
+            : `opacity ${CHOOSER_CLOSE_MS}ms ${CHOOSER_EASE_CSS}, transform ${CHOOSER_CLOSE_MS}ms ${CHOOSER_EASE_CSS}`,
+        transformOrigin,
+      }}
+      onMouseDown={(e) => e.preventDefault()}
+      onTransitionEnd={handleTransitionEnd}
+    >
+      {children}
+    </div>,
+    document.body
+  )
+}
+
 export function CommandBar({
   externalOpen,
   onExternalOpenHandled,
@@ -99,6 +237,8 @@ export function CommandBar({
   onPrevWeek,
   onNextWeek,
   projects,
+  bulkSelection,
+  onEditorOpen,
 }: {
   externalOpen?: TaskEditorInitialData | null
   onExternalOpenHandled?: () => void
@@ -111,6 +251,9 @@ export function CommandBar({
   onPrevWeek?: () => void
   onNextWeek?: () => void
   projects: CanvasProject[]
+  bulkSelection?: CommandBarBulkSelection | null
+  /** Fired when the task editor shell opens from this bar (e.g. Add new). */
+  onEditorOpen?: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
   /** Keeps `TaskEditorPanel` mounted through close animation until shell height finishes. */
@@ -118,6 +261,10 @@ export function CommandBar({
   const [initialData, setInitialData] = useState<TaskEditorInitialData | null>(null)
   const [editorKey, setEditorKey] = useState(0)
   const contentRef = useRef<HTMLDivElement>(null)
+  const idleStripMeasureRef = useRef<HTMLDivElement>(null)
+  const bulkStripMeasureRef = useRef<HTMLDivElement>(null)
+  const [idleStripW, setIdleStripW] = useState(0)
+  const [bulkStripW, setBulkStripW] = useState(0)
   const [expandedHeight, setExpandedHeight] = useState(440)
   const shouldReduceMotion = useReducedMotion()
 
@@ -139,6 +286,20 @@ export function CommandBar({
     setDateSearchMode(false)
     setDateQuery("")
   }, [])
+
+  const [bulkPicker, setBulkPicker] = useState<null | { kind: "project" | "priority"; rect: DOMRect }>(
+    null
+  )
+  const bulkWasActiveRef = useRef(false)
+
+  useEffect(() => {
+    const on = Boolean(bulkSelection)
+    if (on && !bulkWasActiveRef.current) {
+      exitDateSearchMode()
+    }
+    bulkWasActiveRef.current = on
+    if (!on) setBulkPicker(null)
+  }, [bulkSelection, exitDateSearchMode])
 
   const confirmGoToDate = useCallback(() => {
     if (parsedDate) {
@@ -173,10 +334,26 @@ export function CommandBar({
     onEditDone?.()
   }, [onEditDone])
 
+  const openNewTaskEditor = useCallback(() => {
+    onEditorOpen?.()
+    setInitialData({ noDuration: true })
+    setEditorKey((k) => k + 1)
+    setMountEditor(true)
+    setExpanded(true)
+  }, [onEditorOpen])
+
   // ESC to collapse or exit date search; clear edit state when closing so next open is create mode
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
+        if (bulkPicker != null) {
+          setBulkPicker(null)
+          return
+        }
+        if (bulkSelection) {
+          bulkSelection.onExit()
+          return
+        }
         if (dateSearchMode) {
           exitDateSearchMode()
         } else if (expanded) {
@@ -190,10 +367,41 @@ export function CommandBar({
         e.preventDefault()
         confirmGoToDate()
       }
+      // Shift+T — same as "Add new" (schedule view only; this bar is not mounted on canvas)
+      if (
+        e.shiftKey &&
+        (e.key === "t" || e.key === "T") &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey
+      ) {
+        const target = e.target as HTMLElement
+        if (
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable
+        ) {
+          return
+        }
+        if (expanded || dateSearchMode || bulkSelection || bulkPicker != null) return
+        e.preventDefault()
+        openNewTaskEditor()
+      }
     }
     document.addEventListener("keydown", onKey)
     return () => document.removeEventListener("keydown", onKey)
-  }, [expanded, dateSearchMode, parsedDate, exitDateSearchMode, confirmGoToDate])
+  }, [
+    expanded,
+    dateSearchMode,
+    parsedDate,
+    exitDateSearchMode,
+    confirmGoToDate,
+    bulkSelection,
+    bulkPicker,
+    onEditDone,
+    openNewTaskEditor,
+  ])
 
   // Measure expanded content height after it renders
   useEffect(() => {
@@ -208,16 +416,75 @@ export function CommandBar({
     }
   }, [expanded, mountEditor])
 
+  const measureCollapsedStripWidths = useCallback(() => {
+    const iw = idleStripMeasureRef.current?.getBoundingClientRect().width ?? 0
+    const bw = bulkStripMeasureRef.current?.getBoundingClientRect().width ?? 0
+    if (iw > 0) setIdleStripW(Math.ceil(iw))
+    if (bw > 0) setBulkStripW(Math.ceil(bw))
+  }, [])
+
   const shellTransition = shouldReduceMotion
     ? { duration: 0 }
     : {
         duration: expanded ? SHELL_OPEN_S : SHELL_CLOSE_S,
-        ease: SHELL_EASE_OUT,
+        ease: CADENCE_EASE_OUT,
       }
 
   const shellOpacityTransition = shouldReduceMotion
     ? "none"
     : `opacity ${expanded ? SHELL_OPEN_MS : SHELL_CLOSE_MS}ms ${SHELL_BEZIER_CSS}`
+
+  const bulkActive = Boolean(bulkSelection)
+  /** Idle + bulk strips crossfade: open timing when editor or bulk is “disclosing”; close when returning to idle-only. */
+  const collapsedFaceOpacityTransition = shouldReduceMotion
+    ? "none"
+    : expanded || bulkActive
+      ? `opacity ${SHELL_OPEN_MS}ms ${SHELL_BEZIER_CSS}`
+      : `opacity ${SHELL_CLOSE_MS}ms ${SHELL_BEZIER_CSS}`
+
+  const idleFaceVisible = !expanded && !bulkActive
+  const bulkFaceVisible = !expanded && bulkActive
+  const bulkFaceModel = bulkSelection ?? BULK_FACE_LAYOUT_STUB
+
+  useLayoutEffect(() => {
+    measureCollapsedStripWidths()
+  }, [measureCollapsedStripWidths, bulkSelection, bulkFaceModel.count])
+
+  useEffect(() => {
+    const idleEl = idleStripMeasureRef.current
+    const bulkEl = bulkStripMeasureRef.current
+    if (!idleEl || !bulkEl || typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(() => measureCollapsedStripWidths())
+    ro.observe(idleEl)
+    ro.observe(bulkEl)
+    return () => ro.disconnect()
+  }, [measureCollapsedStripWidths])
+
+  const collapsedStripTargetWidth =
+    idleStripW > 0 && bulkStripW > 0
+      ? bulkActive
+        ? bulkStripW
+        : idleStripW
+      : Math.max(idleStripW, bulkStripW, 48)
+
+  /** Idle strip width — expanded task editor matches this so the shell does not grow with editor content. */
+  const idleCommandBarWidth =
+    idleStripW > 0 ? idleStripW : Math.max(collapsedStripTargetWidth, 48)
+
+  /** Single shell width: idle strip when expanded; collapsed strip when idle/bulk; auto for date-search row. */
+  const shellTargetWidth: number | "auto" =
+    dateSearchMode && !expanded
+      ? "auto"
+      : expanded
+        ? idleCommandBarWidth
+        : collapsedStripTargetWidth
+
+  const collapsedStripMotionTransition = shouldReduceMotion || expanded
+    ? { duration: 0 }
+    : {
+        duration: bulkActive ? SHELL_OPEN_S : SHELL_CLOSE_S,
+        ease: CADENCE_EASE_OUT,
+      }
 
   const handleShellAnimationComplete = useCallback(() => {
     if (!expanded) setMountEditor(false)
@@ -227,7 +494,7 @@ export function CommandBar({
     <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex items-end justify-center px-4">
       {/* Single motion container that animates height */}
       <motion.div
-        className="pointer-events-auto relative w-full max-w-[380px] overflow-hidden rounded-xl border border-border/50 bg-secondary shadow-sm"
+        className="pointer-events-auto relative max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border/50 bg-secondary shadow-sm"
         style={{ originY: 1 }}
         initial={false}
         animate={{
@@ -236,6 +503,7 @@ export function CommandBar({
             : dateSearchMode && dateQuery.trim()
               ? COLLAPSED_HEIGHT + 56 // Add space for suggestion row
               : COLLAPSED_HEIGHT,
+          width: shellTargetWidth,
         }}
         transition={shellTransition}
         onAnimationComplete={handleShellAnimationComplete}
@@ -263,64 +531,203 @@ export function CommandBar({
           )}
         </div>
 
-        {/* Collapsed content - Default mode */}
+        {/* Collapsed idle + bulk: absolute stacked faces (no layout coupling) + measured width morph. */}
         {!dateSearchMode && (
-          <div
-            className={cn(
-              "flex items-center justify-center gap-1 px-4",
-              expanded
-                ? "pointer-events-none opacity-0"
-                : "pointer-events-auto opacity-100"
-            )}
-            style={{ height: COLLAPSED_HEIGHT, transition: shellOpacityTransition }}
+          <motion.div
+            className="relative shrink-0 overflow-hidden"
+            style={{ height: COLLAPSED_HEIGHT }}
+            initial={false}
+            animate={{ width: collapsedStripTargetWidth }}
+            transition={collapsedStripMotionTransition}
           >
-            <button
-              onClick={() => {
-                // Untimed task (same intent as sidebar quick-add): no calendar block until user drags onto grid.
-                setInitialData({ noDuration: true })
-                setEditorKey((k) => k + 1)
-                setMountEditor(true)
-                setExpanded(true)
+            <div
+              ref={idleStripMeasureRef}
+              className={cn(
+                "absolute left-0 top-0 flex w-max items-center justify-center gap-1 px-4",
+                idleFaceVisible ? "pointer-events-auto" : "pointer-events-none"
+              )}
+              style={{
+                height: COLLAPSED_HEIGHT,
+                opacity: idleFaceVisible ? 1 : 0,
+                transition: collapsedFaceOpacityTransition,
               }}
-              className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium text-text-muted transition-colors hover:text-text"
             >
-              <Plus className="h-3.5 w-3.5" />
-              Add new
-            </button>
+              <ShortcutHintWrap
+                label="Add new task"
+                shortcut={"\u21E7 T"}
+                tooltipPosition="above"
+                tooltipAlign="end"
+                portal
+              >
+                {({ dismiss }) => (
+                  <button
+                    type="button"
+                    aria-label="Add new task"
+                    onClick={() => {
+                      dismiss()
+                      openNewTaskEditor()
+                    }}
+                    className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium text-text-muted transition-colors hover:text-text"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add new
+                  </button>
+                )}
+              </ShortcutHintWrap>
 
-            <div className="mx-1 h-4 w-px bg-border" />
+              <div className="mx-1 h-4 w-px bg-border" />
 
-            <div className="flex items-center gap-0.5">
+              <div className="flex items-center gap-0.5">
+                <button
+                  onClick={onPrevWeek}
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors hover:text-text"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={onGoToToday}
+                  className="flex items-center rounded px-2.5 py-1.5 text-xs font-medium text-text-muted transition-colors hover:text-text"
+                >
+                  Today
+                </button>
+                <button
+                  onClick={onNextWeek}
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors hover:text-text"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              <div className="mx-1 h-4 w-px bg-border" />
+
               <button
-                onClick={onPrevWeek}
-                className="flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors hover:text-text"
+                onClick={() => setDateSearchMode(true)}
+                className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium text-text-muted transition-colors hover:text-text"
               >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={onGoToToday}
-                className="flex items-center rounded px-2.5 py-1.5 text-xs font-medium text-text-muted transition-colors hover:text-text"
-              >
-                Today
-              </button>
-              <button
-                onClick={onNextWeek}
-                className="flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors hover:text-text"
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
+                <ArrowRight className="h-3.5 w-3.5" />
+                Go to date
               </button>
             </div>
 
-            <div className="mx-1 h-4 w-px bg-border" />
-
-            <button
-              onClick={() => setDateSearchMode(true)}
-              className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium text-text-muted transition-colors hover:text-text"
+            <div
+              ref={bulkStripMeasureRef}
+              className={cn(
+                "absolute left-0 top-0 flex w-max items-center gap-2 px-2",
+                bulkFaceVisible && bulkSelection ? "pointer-events-auto" : "pointer-events-none"
+              )}
+              style={{
+                height: COLLAPSED_HEIGHT,
+                opacity: bulkFaceVisible ? 1 : 0,
+                transition: collapsedFaceOpacityTransition,
+              }}
+              aria-hidden={!bulkSelection}
             >
-              <ArrowRight className="h-3.5 w-3.5" />
-              Go to date
-            </button>
-          </div>
+              <button
+                type="button"
+                onClick={() => bulkFaceModel.onExit()}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:text-text"
+                aria-label="Exit multi-select"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+              </button>
+              <div className="mx-1 h-4 w-px bg-border" />
+              <span className="shrink-0 px-0.5 text-[11px] font-medium tabular-nums text-text-muted">
+                {bulkFaceModel.count} selected
+              </span>
+              <button
+                type="button"
+                onClick={() => bulkFaceModel.onDone()}
+                className="flex shrink-0 items-center gap-1 rounded border border-border/50 bg-surface px-2.5 py-1.5 text-[11px] font-medium text-text shadow-sm transition-colors hover:bg-surface-2"
+              >
+                <Check className="h-3 w-3 text-green-500" />
+                Done
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  setBulkPicker((cur) =>
+                    cur?.kind === "project" ? null : { kind: "project", rect }
+                  )
+                }}
+                className="flex shrink-0 items-center gap-1 rounded border border-border/50 bg-surface px-2.5 py-1.5 text-[11px] font-medium text-text shadow-sm transition-colors hover:bg-surface-2"
+              >
+                <Layers className="h-3 w-3 text-app-accent" />
+                Project
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  setBulkPicker((cur) =>
+                    cur?.kind === "priority" ? null : { kind: "priority", rect }
+                  )
+                }}
+                className="flex shrink-0 items-center gap-1 rounded border border-border/50 bg-surface px-2.5 py-1.5 text-[11px] font-medium text-text shadow-sm transition-colors hover:bg-surface-2"
+              >
+                <img src="/icons/none.svg" alt="" className="h-3 w-3 shrink-0" />
+                Priority
+              </button>
+              <div className="mx-1 h-4 w-px bg-border" />
+              <button
+                type="button"
+                onClick={() => bulkFaceModel.onDelete()}
+                className="ml-auto flex shrink-0 items-center gap-0.5 rounded px-2 py-1 text-[11px] font-medium text-red-400 transition-colors hover:bg-red-500/10"
+              >
+                <Trash2 className="h-3 w-3" />
+                Delete
+              </button>
+            </div>
+          </motion.div>
+        )}
+
+        {bulkPicker?.kind === "project" && bulkSelection && (
+          <BulkChooserPopover
+            anchorRect={bulkPicker.rect}
+            reducedMotion={!!shouldReduceMotion}
+            onClose={() => setBulkPicker(null)}
+          >
+            {projects.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => {
+                  bulkSelection.onProject(p.id)
+                  setBulkPicker(null)
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-text transition-colors hover:bg-surface-2"
+              >
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: p.color }}
+                />
+                <span className="truncate">{p.name}</span>
+              </button>
+            ))}
+          </BulkChooserPopover>
+        )}
+
+        {bulkPicker?.kind === "priority" && bulkSelection && (
+          <BulkChooserPopover
+            anchorRect={bulkPicker.rect}
+            reducedMotion={!!shouldReduceMotion}
+            onClose={() => setBulkPicker(null)}
+          >
+            {priorityOptions.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => {
+                  bulkSelection.onPriority(opt.value)
+                  setBulkPicker(null)
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-text capitalize transition-colors hover:bg-surface-2"
+              >
+                <img src={`/icons/${opt.icon}`} alt="" className="h-3.5 w-3.5 shrink-0" />
+                {opt.label}
+              </button>
+            ))}
+          </BulkChooserPopover>
         )}
 
         {/* Collapsed content - Date search mode */}

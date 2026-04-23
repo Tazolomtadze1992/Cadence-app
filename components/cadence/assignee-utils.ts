@@ -1,4 +1,4 @@
-import type { TaskAssignee } from "@/components/chrono/task-editor-modal"
+import type { TaskAssignee } from "@/components/cadence/task-editor-modal"
 
 /** Display label for popover and hover tooltips (`Unassigned` when empty). */
 export function formatAssigneeLabel(assignee: TaskAssignee | undefined | null): string {

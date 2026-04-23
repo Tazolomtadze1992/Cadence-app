@@ -1,6 +1,16 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback, useMemo, type ComponentType, type ReactNode, type DragEvent } from "react"
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+  type ComponentType,
+  type ReactNode,
+  type DragEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react"
 import { createPortal } from "react-dom"
 import { format, startOfDay, addDays } from "date-fns"
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
@@ -16,16 +26,17 @@ import {
   Tag,
   Calendar as CalendarIcon,
   User,
+  Layers,
 } from "lucide-react"
 import { Calendar } from "@/components/ui/calendar"
-import { whenInlineCalendarFormatters } from "@/components/chrono/task-editor-modal"
+import { whenInlineCalendarFormatters } from "@/components/cadence/task-editor-modal"
 import {
   QUICK_WHEN_OPTIONS,
   PICK_DATE_ICON,
   whenPickRowLabel,
-} from "@/components/chrono/schedule-when-shared"
+} from "@/components/cadence/schedule-when-shared"
 import type { Task } from "@/app/page"
-import { formatAssigneeLabel, isAssignedDesignee } from "@/components/chrono/assignee-utils"
+import { formatAssigneeLabel, isAssignedDesignee } from "@/components/cadence/assignee-utils"
 import type { CanvasProject } from "./canvas-board"
 import { AgendaView } from "./agenda-view"
 import { IconTooltipButton } from "./icon-tooltip-button"
@@ -33,6 +44,17 @@ import { ProjectActionsDropdown } from "./canvas-sidebar"
 import { ProjectItem } from "./project-item"
 import { AddProjectPopover } from "./add-project-popover"
 import { bucketForSchedulePickedDate } from "./picked-due-bucket"
+import { CADENCE_EASE_SLIDE, SIDEBAR_DISCLOSURE_DURATION_S } from "@/lib/cadence-motion"
+
+/** Disclosure body only: tied to height via the same `transition` (no separate exit timing). */
+const SIDEBAR_DISCLOSURE_CONTENT_SOFT = {
+  opacity: 0.96,
+  filter: "blur(1.5px)",
+} as const
+const SIDEBAR_DISCLOSURE_CONTENT_CRISP = {
+  opacity: 1,
+  filter: "blur(0px)",
+} as const
 
 const scheduledGroups = [
   { label: "Due today", color: "#f97316", icon: "due-today.svg" },
@@ -86,6 +108,9 @@ export function AppSidebar({
   onAddProject,
   onUpdateProject,
   onDeleteProject,
+  selectedTaskIds,
+  onSidebarTaskRowClick,
+  onSidebarTasksTabChange,
 }: {
   collapsed: boolean
   onToggleSidebar: () => void
@@ -108,14 +133,15 @@ export function AppSidebar({
   onAddProject?: (name: string, color: string) => void
   onUpdateProject?: (projectId: string, updates: Partial<CanvasProject>) => void
   onDeleteProject?: (projectId: string) => void
+  selectedTaskIds?: readonly string[]
+  onSidebarTaskRowClick?: (taskId: string, e: ReactMouseEvent, tab: "all" | "completed") => void
+  onSidebarTasksTabChange?: () => void
 }) {
   const [slideDirection, setSlideDirection] = useState<1 | -1>(1)
   /** All ↔ Completed: 1 = forward (Completed enters from right), -1 = back (All enters from left). */
   const [tabSlideDirection, setTabSlideDirection] = useState<1 | -1>(1)
   const [activeTab, setActiveTab] = useState<"all" | "completed">("all")
   const [projectsOpen, setProjectsOpen] = useState(true)
-  const projectsRef = useRef<HTMLDivElement>(null)
-  const [projectsHeight, setProjectsHeight] = useState<number | undefined>(undefined)
 
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
@@ -325,12 +351,6 @@ export function AppSidebar({
     [taskDropdown, tasks]
   )
 
-  useEffect(() => {
-    requestAnimationFrame(() => {
-      if (projectsRef.current) setProjectsHeight(projectsRef.current.scrollHeight)
-    })
-  }, [projects, expandedProjects, projectTaskMap])
-
   const switchToAgenda = useCallback(() => {
     if (sidebarView === "agenda") return
     setSlideDirection(1) // tasks slides left, agenda slides in from right
@@ -397,14 +417,13 @@ export function AppSidebar({
     () =>
       shouldReduceMotion
         ? { duration: 0 }
-        : { duration: 0.2, ease: [0.2, 0.8, 0.2, 1] as const },
+        : { duration: SIDEBAR_DISCLOSURE_DURATION_S, ease: CADENCE_EASE_SLIDE },
     [shouldReduceMotion]
   )
-
   return (
     <aside
       className={cn(
-        "flex h-full shrink-0 flex-col bg-background overflow-hidden transition-all duration-200 ease-out",
+        "flex h-full shrink-0 flex-col bg-background overflow-hidden transition-[width,opacity] duration-200 ease-out",
         collapsed ? "w-0 opacity-0" : "w-[260px] opacity-100"
       )}
     >
@@ -431,6 +450,7 @@ export function AppSidebar({
                       if (activeTab === "all") return
                       setTabSlideDirection(-1)
                       setActiveTab("all")
+                      onSidebarTasksTabChange?.()
                     }}
                     className={cn(
                       "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
@@ -444,6 +464,7 @@ export function AppSidebar({
                       if (activeTab === "completed") return
                       setTabSlideDirection(1)
                       setActiveTab("completed")
+                      onSidebarTasksTabChange?.()
                     }}
                     className={cn(
                       "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
@@ -467,6 +488,9 @@ export function AppSidebar({
                       exit="exit"
                       transition={slideTransition}
                       className="absolute inset-0 flex min-h-0 flex-col overflow-hidden"
+                      role="listbox"
+                      aria-label="Tasks"
+                      aria-multiselectable="true"
                     >
               {/* Scheduled groups */}
               <div className="px-1.5 py-3">
@@ -487,28 +511,28 @@ export function AppSidebar({
                         showPlus={group.label !== "Overdue"}
                         onPlusClick={() => handleQuickAddFromScheduledGroup(group.label)}
                       />
-                      {isExpanded && count > 0 && (
-                        <div className="ml-5 mt-0.5 mb-1">
-                          {groupTasks.map((t) => (
-                            <TaskRow
-                              key={t.id}
-                              task={t}
-                              onToggleComplete={() => onToggleComplete?.(t.id)}
-                              onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
-                              isDraggable={group.label !== "Overdue"}
-                              onDragStart={() => {
-                                setDraggingTaskId(t.id)
-                                onDragTaskStart?.(t)
-                              }}
-                              onDragEnd={() => {
-                                setDraggingTaskId(null)
-                                onDragTaskEnd?.()
-                              }}
-                              isDragging={draggingTaskId === t.id}
-                            />
-                          ))}
-                        </div>
-                      )}
+                      <SidebarDisclosure show={isExpanded && count > 0} motionKey={`sched-${group.label}-tasks`}>
+                        {groupTasks.map((t) => (
+                          <TaskRow
+                            key={t.id}
+                            task={t}
+                            selected={selectedTaskIds?.includes(t.id) ?? false}
+                            onRowClick={(e) => onSidebarTaskRowClick?.(t.id, e, "all")}
+                            onToggleComplete={() => onToggleComplete?.(t.id)}
+                            onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
+                            isDraggable={group.label !== "Overdue"}
+                            onDragStart={() => {
+                              setDraggingTaskId(t.id)
+                              onDragTaskStart?.(t)
+                            }}
+                            onDragEnd={() => {
+                              setDraggingTaskId(null)
+                              onDragTaskEnd?.()
+                            }}
+                            isDragging={draggingTaskId === t.id}
+                          />
+                        ))}
+                      </SidebarDisclosure>
                     </div>
                   )
                 })}
@@ -520,98 +544,94 @@ export function AppSidebar({
                 <div className="group/projects mb-0.5 flex w-full items-center px-2">
                   <button
                     onClick={() => setProjectsOpen(!projectsOpen)}
-                    className="flex flex-1 items-center gap-1.5 text-[13px] font-medium text-text/60 transition-colors duration-300 ease-in-out hover:text-text/90"
+                    className="flex flex-1 items-center gap-1.5 text-[13px] font-medium text-text/60 transition-colors duration-[200ms] ease-[var(--cadence-ease-slide)] hover:text-text/90"
                   >
-                    <ChevronRight className={cn("h-2.5 w-2.5 transition-transform duration-200", projectsOpen && "rotate-90")} />
+                    <ChevronRight
+                      className={cn(
+                        "h-2.5 w-2.5 transition-transform duration-[200ms] ease-[var(--cadence-ease-slide)] motion-reduce:transition-none",
+                        projectsOpen && "rotate-90"
+                      )}
+                    />
                     Projects
                   </button>
-                  <button
-                    ref={addProjectBtnRef}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (addProjectBtnRef.current) {
-                        const rect = addProjectBtnRef.current.getBoundingClientRect()
-                        setAddProjectPos({ top: rect.bottom + 4, left: rect.left })
-                      }
-                      setAddProjectOpen(true)
-                    }}
-                    className="flex h-6 w-6 items-center justify-center rounded text-text-muted opacity-0 transition-all duration-300 ease-in-out hover:bg-surface-2 hover:text-text group-hover/projects:opacity-100"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
+                  {onAddProject && (
+                    <button
+                      ref={addProjectBtnRef}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (addProjectBtnRef.current) {
+                          const rect = addProjectBtnRef.current.getBoundingClientRect()
+                          setAddProjectPos({ top: rect.bottom + 4, left: rect.left })
+                        }
+                        setAddProjectOpen(true)
+                      }}
+                      className="flex h-6 w-6 items-center justify-center rounded text-text-muted opacity-0 transition-[opacity,colors,transform] duration-[200ms] ease-[var(--cadence-ease-slide)] hover:bg-surface-2 hover:text-text group-hover/projects:opacity-100"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
 
-                <div
-                  ref={projectsRef}
-                  className="transform transition-[max-height,opacity,transform] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
-                  style={{
-                    maxHeight: projectsOpen ? (projectsHeight ?? 2000) : 0,
-                    opacity: projectsOpen ? 1 : 0,
-                    overflow: "hidden",
-                    transform: projectsOpen ? "translateY(0)" : "translateY(-4px)",
-                  }}
+                <SidebarDisclosure
+                  show={projectsOpen}
+                  motionKey="sidebar-projects-section"
+                  indented={false}
+                  innerClassName="mt-0.5"
                 >
-                  <div
-                    className={cn(
-                      "transform transition-opacity transition-transform duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]",
-                      projectsOpen ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1"
-                    )}
-                  >
-                    {projects.map((project) => {
-                      const projectTasks = projectTaskMap[project.id] ?? []
-                      const count = projectTasks.length
-                      const isExpanded = expandedProjects[project.id] ?? false
-                      const isRenaming = renamingProjectId === project.id
-                      return (
-                        <div key={project.id}>
-                          <ProjectItem
-                            label={project.name}
+                  {projects.map((project) => {
+                    const projectTasks = projectTaskMap[project.id] ?? []
+                    const count = projectTasks.length
+                    const isExpanded = expandedProjects[project.id] ?? false
+                    const isRenaming = renamingProjectId === project.id
+                    return (
+                      <div key={project.id}>
+                        <ProjectItem
+                          label={project.name}
                           color={project.color}
-                            count={count > 0 ? count : undefined}
-                            hasChevron
-                            isExpanded={isExpanded}
-                            onToggleExpand={count > 0 ? () => toggleProject(project.id) : undefined}
-                            isRenaming={isRenaming}
-                            renameValue={renameProjectValue}
-                            renameInputRef={renameProjectInputRef}
-                            onRenameChange={setRenameProjectValue}
-                            onRenameCommit={(value) => commitProjectRename(project.id, value)}
-                            onRenameCancel={() => setRenamingProjectId(null)}
+                          count={count > 0 ? count : undefined}
+                          hasChevron
+                          isExpanded={isExpanded}
+                          onToggleExpand={count > 0 ? () => toggleProject(project.id) : undefined}
+                          isRenaming={isRenaming}
+                          renameValue={renameProjectValue}
+                          renameInputRef={renameProjectInputRef}
+                          onRenameChange={setRenameProjectValue}
+                          onRenameCommit={(value) => commitProjectRename(project.id, value)}
+                          onRenameCancel={() => setRenamingProjectId(null)}
                           onPlusClick={() => {
                             onQuickAddTask?.({ projectId: project.id })
                           }}
                           onMoreClick={(anchor) => {
                             setProjectActionsDropdown({ projectId: project.id, anchor })
                           }}
-                          />
-                          {isExpanded && count > 0 && (
-                            <div className="ml-5 mt-0.5 mb-1">
-                              {projectTasks.map((t) => (
-                                <TaskRow
-                                  key={t.id}
-                                  task={t}
-                                  onToggleComplete={() => onToggleComplete?.(t.id)}
-                                  onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
-                                  isDraggable={!taskBelongsToOverdueBucket(t)}
-                                  onDragStart={() => {
-                                    setDraggingTaskId(t.id)
-                                    onDragTaskStart?.(t)
-                                  }}
-                                  onDragEnd={() => {
-                                    setDraggingTaskId(null)
-                                    onDragTaskEnd?.()
-                                  }}
-                                  isDragging={draggingTaskId === t.id}
-                                />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
+                        />
+                        <SidebarDisclosure show={isExpanded && count > 0} motionKey={`project-${project.id}-tasks`}>
+                          {projectTasks.map((t) => (
+                            <TaskRow
+                              key={t.id}
+                              task={t}
+                              selected={selectedTaskIds?.includes(t.id) ?? false}
+                              onRowClick={(e) => onSidebarTaskRowClick?.(t.id, e, "all")}
+                              onToggleComplete={() => onToggleComplete?.(t.id)}
+                              onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
+                              isDraggable={!taskBelongsToOverdueBucket(t)}
+                              onDragStart={() => {
+                                setDraggingTaskId(t.id)
+                                onDragTaskStart?.(t)
+                              }}
+                              onDragEnd={() => {
+                                setDraggingTaskId(null)
+                                onDragTaskEnd?.()
+                              }}
+                              isDragging={draggingTaskId === t.id}
+                            />
+                          ))}
+                        </SidebarDisclosure>
+                      </div>
+                    )
+                  })}
+                </SidebarDisclosure>
               </div>
 
               {addProjectOpen && addProjectPos && onAddProject && (
@@ -634,7 +654,7 @@ export function AppSidebar({
                   <ProjectActionsDropdown
                     anchor={projectActionsDropdown.anchor}
                     currentColor={project.color}
-                    deleteDisabled={count > 0}
+                    deleteDisabled
                     onClose={() => setProjectActionsDropdown(null)}
                     onColorChange={(color) => {
                       onUpdateProject?.(project.id, { color })
@@ -661,16 +681,21 @@ export function AppSidebar({
                       exit="exit"
                       transition={slideTransition}
                       className="absolute inset-0 flex min-h-0 flex-col overflow-hidden"
+                      role="listbox"
+                      aria-label="Completed tasks"
+                      aria-multiselectable="true"
                     >
                       {completedTasks.length === 0 ? (
                         <CompletedEmptyState />
                       ) : (
                         <div className="flex flex-1 flex-col overflow-y-auto px-1.5 py-3">
-                          <div className="space-y-0.5">
+                          <div className="space-y-1 pl-0 pr-1.5">
                             {completedTasks.map((t) => (
                               <TaskRow
                                 key={t.id}
                                 task={t}
+                                selected={selectedTaskIds?.includes(t.id) ?? false}
+                                onRowClick={(e) => onSidebarTaskRowClick?.(t.id, e, "completed")}
                                 onToggleComplete={() => onToggleComplete?.(t.id)}
                                 onMoreClick={(anchor) => setTaskDropdown({ taskId: t.id, anchor })}
                                 isDraggable={false}
@@ -1258,12 +1283,7 @@ function TaskActionsDropdown({
         onMouseEnter={(e) => handleSubHover("project", e)}
         onClick={(e) => handleSubHover("project", e)}
       >
-        <span className="flex h-3 w-3 items-center justify-center">
-          <span
-            className="h-2 w-2 rounded-full"
-            style={{ backgroundColor: task.tagColor ?? "#94a3b8" }}
-          />
-        </span>
+        <Layers className="h-3.5 w-3.5 text-text-muted" />
         <span className="flex-1 text-left">Project</span>
         <ChevronRight className="h-3 w-3 text-text-faint" />
       </button>
@@ -1500,6 +1520,8 @@ function CompletedEmptyState() {
 function TaskRow({
   task,
   projectName,
+  selected,
+  onRowClick,
   onToggleComplete,
   onMoreClick,
   isDraggable,
@@ -1509,6 +1531,8 @@ function TaskRow({
 }: {
   task: Task
   projectName?: string
+  selected?: boolean
+  onRowClick?: (e: ReactMouseEvent) => void
   onToggleComplete: () => void
   onMoreClick?: (anchor: { top: number; left: number; right: number; bottom: number }) => void
   isDraggable?: boolean
@@ -1536,6 +1560,10 @@ function TaskRow({
   }, [task.dueDate])
 
   const handleDragStart = (e: DragEvent) => {
+    if (e.shiftKey) {
+      e.preventDefault()
+      return
+    }
     e.dataTransfer.setData("text/plain", task.id)
     e.dataTransfer.effectAllowed = "move"
     if (emptyDragImageRef.current) {
@@ -1546,11 +1574,16 @@ function TaskRow({
 
   return (
     <div
+      role="option"
+      aria-selected={selected || undefined}
       className={cn(
-        "group/task flex w-full items-start gap-2.5 rounded-lg px-2 py-2 transition-colors duration-150 hover:bg-surface-2/30",
-        isDraggable && "cursor-grab active:cursor-grabbing"
+        "group/task box-border flex w-full max-w-full min-w-0 items-start gap-2.5 rounded-lg px-2 py-1.5 transition-colors duration-150 hover:bg-surface-2/30",
+        isDraggable && "cursor-grab active:cursor-grabbing",
+        /** `ring-inset` keeps the ring inside the box so `overflow-hidden` on `SidebarDisclosure` does not clip it. */
+        selected && "bg-surface-2/30 ring-1 ring-inset ring-border/30"
       )}
       draggable={isDraggable ?? false}
+      onClick={(e) => onRowClick?.(e)}
       onDragStart={isDraggable ? handleDragStart : undefined}
       onDragEnd={isDraggable ? onDragEnd : undefined}
     >
@@ -1630,6 +1663,52 @@ function TaskRow({
   )
 }
 
+function SidebarDisclosure({
+  show,
+  motionKey,
+  children,
+  indented = true,
+  /** `pl-0`: rows use full disclosure width on the left (align with group content). `pr-1.5`: match All/Completed horizontal inset on the right. */
+  innerClassName = "mt-0.5 mb-1 space-y-1 pl-0 pr-1.5",
+}: {
+  show: boolean
+  motionKey: string
+  children: ReactNode
+  /** Task lists under a row use `ml-2` to match header row `px-2` (was `ml-5`, which left an extra left gap vs chevron/row inset). Full-width section bodies set `false`. */
+  indented?: boolean
+  innerClassName?: string
+}) {
+  const reduce = useReducedMotion()
+  const transition = reduce
+    ? { duration: 0 }
+    : { duration: SIDEBAR_DISCLOSURE_DURATION_S, ease: CADENCE_EASE_SLIDE }
+
+  return (
+    <AnimatePresence initial={false}>
+      {show ? (
+        <motion.div
+          key={motionKey}
+          initial={
+            reduce
+              ? false
+              : { height: 0, ...SIDEBAR_DISCLOSURE_CONTENT_SOFT }
+          }
+          animate={{ height: "auto", ...SIDEBAR_DISCLOSURE_CONTENT_CRISP }}
+          exit={
+            reduce
+              ? { height: 0, ...SIDEBAR_DISCLOSURE_CONTENT_CRISP }
+              : { height: 0, ...SIDEBAR_DISCLOSURE_CONTENT_SOFT }
+          }
+          transition={transition}
+          className={cn("overflow-hidden", indented && "ml-2")}
+        >
+          <div className={innerClassName}>{children}</div>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  )
+}
+
 function SidebarItem({
   label,
   color,
@@ -1679,7 +1758,10 @@ function SidebarItem({
       <div className="flex flex-1 items-center gap-2.5 min-w-0">
         {hasChevron && (
           <ChevronRight
-            className={cn("h-3 w-3 shrink-0 text-text-faint transition-transform duration-200", isExpanded && "rotate-90")}
+            className={cn(
+              "h-3 w-3 shrink-0 text-text-faint transition-transform duration-200 ease-[var(--cadence-ease-slide)] motion-reduce:transition-none",
+              isExpanded && "rotate-90"
+            )}
           />
         )}
         {icon ? (

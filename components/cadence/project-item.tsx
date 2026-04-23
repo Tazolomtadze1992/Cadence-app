@@ -60,7 +60,7 @@ export function ProjectItem({
           {hasChevron && (
             <ChevronRight
               className={cn(
-                "h-3 w-3 shrink-0 text-text-faint transition-transform duration-200",
+                "h-3 w-3 shrink-0 text-text-faint transition-transform duration-200 ease-[var(--cadence-ease-slide)] motion-reduce:transition-none",
                 onToggleExpand && "group-hover:text-text",
                 isExpanded && "rotate-90"
               )}

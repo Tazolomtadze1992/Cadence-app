@@ -15,6 +15,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
+import { CADENCE_EASE_MODAL } from "@/lib/cadence-motion"
 
 type AccountTabId = "profile" | "invite" | "calendars" | "tasks" | "appearance" | "shortcuts" | "download" | "whats-new" | "contact" | "feedback" | "logout"
 
@@ -165,7 +166,7 @@ export function AccountPanel({
   const [activeTab, setActiveTab] = useState<AccountTabId>("profile")
   const shouldReduceMotion = useReducedMotion()
   /** Single timing curve + duration for overlay + content (paired modal layers). */
-  const accountPanelEase = [0.22, 1, 0.36, 1] as const
+  const accountPanelEase = CADENCE_EASE_MODAL
   const accountPanelDuration = 0.24
   const overlayTransition = shouldReduceMotion
     ? { duration: 0 }

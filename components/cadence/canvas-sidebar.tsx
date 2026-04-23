@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState, useCallback } from "react"
+import { useReducedMotion } from "framer-motion"
 import { createPortal } from "react-dom"
 import { MoreHorizontal, Search, Pencil, Trash2, Plus, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -19,7 +20,8 @@ interface CanvasSidebarProps {
   projectTaskCounts: Record<string, number>
   activeProjectId: string | null
   onSelectProject: (projectId: string) => void
-  onAddProject: (name?: string, icon?: string) => void
+  /** Omitted when the app uses a fixed project catalog (no “add project”). */
+  onAddProject?: (name?: string, icon?: string) => void
   onUpdateProject: (projectId: string, updates: Partial<CanvasProject>) => void
   onDeleteProject: (projectId: string) => void
   /** Same as calendar sidebar: quick-add task scoped to a project (+ on project row). */
@@ -63,6 +65,7 @@ export function CanvasSidebar({
   const addProjectBtnRef = useRef<HTMLButtonElement>(null)
   const [addProjectOpen, setAddProjectOpen] = useState(false)
   const [addProjectPos, setAddProjectPos] = useState<{ top: number; left: number } | null>(null)
+  const reduceMotion = useReducedMotion() ?? false
 
   useEffect(() => {
     if (!collapsed) {
@@ -109,7 +112,7 @@ export function CanvasSidebar({
   return (
     <aside
       className={cn(
-        "flex h-full shrink-0 flex-col bg-background overflow-hidden transition-all duration-200 ease-out",
+        "flex h-full shrink-0 flex-col bg-background overflow-hidden transition-[width,opacity] duration-200 ease-out",
         collapsed ? "w-0 opacity-0" : "w-[260px] opacity-100"
       )}
     >
@@ -140,49 +143,50 @@ export function CanvasSidebar({
                     <button
                       type="button"
                       onClick={() => setProjectsOpen(!projectsOpen)}
-                      className="flex flex-1 items-center gap-1.5 text-[13px] font-medium text-text/60 transition-colors duration-300 ease-in-out hover:text-text/90"
+                      className="flex flex-1 items-center gap-1.5 text-[13px] font-medium text-text/60 transition-colors duration-[200ms] ease-[var(--cadence-ease-slide)] hover:text-text/90"
                     >
                       <ChevronRight
                         className={cn(
-                          "h-2.5 w-2.5 transition-transform duration-200",
+                          "h-2.5 w-2.5 transition-transform duration-[200ms] ease-[var(--cadence-ease-slide)] motion-reduce:transition-none",
                           projectsOpen && "rotate-90"
                         )}
                       />
                       Projects
                     </button>
-                    <button
-                      ref={addProjectBtnRef}
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (addProjectBtnRef.current) {
-                          const rect = addProjectBtnRef.current.getBoundingClientRect()
-                          setAddProjectPos({ top: rect.bottom + 4, left: rect.left })
-                        }
-                        setAddProjectOpen(true)
-                      }}
-                      className="flex h-6 w-6 items-center justify-center rounded text-text-muted opacity-0 transition-all duration-300 ease-in-out hover:bg-surface-2 hover:text-text group-hover/projects:opacity-100"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </button>
+                    {onAddProject && (
+                      <button
+                        ref={addProjectBtnRef}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (addProjectBtnRef.current) {
+                            const rect = addProjectBtnRef.current.getBoundingClientRect()
+                            setAddProjectPos({ top: rect.bottom + 4, left: rect.left })
+                          }
+                          setAddProjectOpen(true)
+                        }}
+                        className="flex h-6 w-6 items-center justify-center rounded text-text-muted opacity-0 transition-[opacity,colors,transform] duration-[200ms] ease-[var(--cadence-ease-slide)] hover:bg-surface-2 hover:text-text group-hover/projects:opacity-100"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
 
                   <div
                     ref={projectsRef}
-                    className="transform transition-[max-height,opacity,transform] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+                    className={cn(
+                      "transform overflow-hidden",
+                      reduceMotion
+                        ? "transition-none"
+                        : "transition-[max-height,opacity,transform] duration-[200ms] ease-[var(--cadence-ease-slide)] motion-reduce:transition-none"
+                    )}
                     style={{
                       maxHeight: projectsOpen ? (projectsHeight ?? 2000) : 0,
                       opacity: projectsOpen ? 1 : 0,
-                      overflow: "hidden",
                       transform: projectsOpen ? "translateY(0)" : "translateY(-4px)",
                     }}
                   >
-                    <div
-                      className={cn(
-                        "transform transition-opacity transition-transform duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]",
-                        projectsOpen ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1"
-                      )}
-                    >
+                    <div>
                       {projects.map((project) => {
                         const count = projectTaskCounts[project.id] ?? 0
                         const isRenaming = renamingProjectId === project.id
@@ -216,7 +220,7 @@ export function CanvasSidebar({
               )}
             </div>
 
-            {addProjectOpen && addProjectPos && (
+            {onAddProject && addProjectOpen && addProjectPos && (
               <AddProjectPopover
                 pos={addProjectPos}
                 existingNames={projects.map((p) => p.name)}
@@ -235,7 +239,7 @@ export function CanvasSidebar({
                 <ProjectActionsDropdown
                   anchor={actionsDropdown.anchor}
                   currentColor={project.color}
-                  deleteDisabled={(projectTaskCounts[project.id] ?? 0) > 0}
+                  deleteDisabled
                   onClose={() => setActionsDropdown(null)}
                   onColorChange={(color) => {
                     onUpdateProject(project.id, { color })
