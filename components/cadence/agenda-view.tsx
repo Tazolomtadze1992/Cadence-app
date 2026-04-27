@@ -13,6 +13,7 @@ import {
   isSameDay,
   isSameMonth,
   isToday,
+  startOfDay,
 } from "date-fns"
 import { cn } from "@/lib/utils"
 import { ChevronLeft, ChevronRight, RotateCcw, Clock } from "lucide-react"
@@ -204,8 +205,24 @@ function MiniCalendar({
   )
 }
 
+export type AgendaQuickAddPreset = {
+  tag?: string
+  date?: Date
+  schedule?: string
+  projectId?: string
+}
+
 // ─── Main Component ──────────────────────────────────────────────────────────
-export function AgendaView({ tasks = [], projects = [] }: { tasks?: Task[]; projects?: CanvasProject[] }) {
+export function AgendaView({
+  tasks = [],
+  projects = [],
+  onQuickAddTask,
+}: {
+  tasks?: Task[]
+  projects?: CanvasProject[]
+  /** Same as schedule sidebar / command bar: opens shared task editor via `pendingOpen` in app shell. */
+  onQuickAddTask?: (preset: AgendaQuickAddPreset) => void
+}) {
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date())
   const [currentMonth, setCurrentMonth] = useState<Date>(() => new Date())
 
@@ -266,6 +283,14 @@ export function AgendaView({ tasks = [], projects = [] }: { tasks?: Task[]; proj
 
   const totalItems = scheduledTasks.length + unscheduledTasks.length
 
+  const handleAddTask = useCallback(() => {
+    const d = startOfDay(selectedDate)
+    onQuickAddTask?.({
+      date: d,
+      schedule: "picked",
+    })
+  }, [onQuickAddTask, selectedDate])
+
   return (
     <div className="flex h-full flex-col">
       <MiniCalendar
@@ -291,7 +316,7 @@ export function AgendaView({ tasks = [], projects = [] }: { tasks?: Task[]; proj
 
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {totalItems === 0 ? (
-          <EmptyState />
+          <EmptyState onAddTask={handleAddTask} />
         ) : (
           <div className="space-y-4">
             {scheduledTasks.length > 0 && (

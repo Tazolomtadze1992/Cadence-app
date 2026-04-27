@@ -4,12 +4,48 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { createPortal } from "react-dom"
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { cn } from "@/lib/utils"
-import { CADENCE_EASE_SLIDE } from "@/lib/cadence-motion"
+import {
+  CADENCE_EASE_SLIDE,
+  TOOLTIP_FOCUS_SHOW_MS,
+  TOOLTIP_POINTER_CHAIN_GRACE_MS,
+  TOOLTIP_POINTER_SHOW_MS,
+} from "@/lib/cadence-motion"
 
 type DismissApi = { dismiss: () => void }
 
 const TOOLTIP_VIEWPORT_PAD = 10
 const TOOLTIP_GAP_PX = 8
+
+/** Pointer-driven tooltips currently visible (hover), across all `ShortcutHintWrap` instances. */
+let openPointerTooltipCount = 0
+/** After the last pointer tooltip closes, chain mode stays on until this time (ms since epoch). */
+let pointerTooltipChainGraceUntil = 0
+
+function isPointerTooltipChainActive(): boolean {
+  return openPointerTooltipCount > 0 || Date.now() < pointerTooltipChainGraceUntil
+}
+
+function registerPointerTooltipOpened(): void {
+  openPointerTooltipCount++
+  pointerTooltipChainGraceUntil = 0
+}
+
+function registerPointerTooltipClosed(): void {
+  openPointerTooltipCount = Math.max(0, openPointerTooltipCount - 1)
+  if (openPointerTooltipCount === 0) {
+    pointerTooltipChainGraceUntil = Date.now() + TOOLTIP_POINTER_CHAIN_GRACE_MS
+  }
+}
+
+function prefersFinePointerHover(): boolean {
+  if (typeof window === "undefined") return false
+  return window.matchMedia("(hover: hover) and (pointer: fine)").matches
+}
+
+function isCoarsePointer(): boolean {
+  if (typeof window === "undefined") return false
+  return window.matchMedia("(pointer: coarse)").matches
+}
 
 function ShortcutHintChip({ label, shortcut }: { label: string; shortcut: string }) {
   return (
@@ -41,7 +77,9 @@ export function ShortcutHintWrap({
   portal?: boolean
   children: ReactNode | ((api: DismissApi) => ReactNode)
 }) {
-  const [isHovered, setIsHovered] = useState(false)
+  const [tooltipOpen, setTooltipOpen] = useState(false)
+  /** True only for pointer opens while `isPointerTooltipChainActive()` — suppresses Framer enter animation. */
+  const [chainedPointerEnter, setChainedPointerEnter] = useState(false)
   const shouldReduceMotion = useReducedMotion()
   const tooltipTransition = shouldReduceMotion
     ? { duration: 0 }
@@ -49,13 +87,98 @@ export function ShortcutHintWrap({
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const tipRef = useRef<HTMLDivElement>(null)
+  const isPointerOverRef = useRef(false)
+  const openedViaPointerRef = useRef(false)
+  const pointerShowTimerRef = useRef<number | null>(null)
+  const focusShowTimerRef = useRef<number | null>(null)
+
+  const clearPointerShowTimer = () => {
+    if (pointerShowTimerRef.current != null) {
+      window.clearTimeout(pointerShowTimerRef.current)
+      pointerShowTimerRef.current = null
+    }
+  }
+
+  const clearFocusShowTimer = () => {
+    if (focusShowTimerRef.current != null) {
+      window.clearTimeout(focusShowTimerRef.current)
+      focusShowTimerRef.current = null
+    }
+  }
+
+  const clearAllShowTimers = () => {
+    clearPointerShowTimer()
+    clearFocusShowTimer()
+  }
+
+  const hideTooltipIfPointerOpened = () => {
+    setTooltipOpen((wasOpen) => {
+      if (wasOpen && openedViaPointerRef.current) {
+        registerPointerTooltipClosed()
+        openedViaPointerRef.current = false
+      }
+      return false
+    })
+  }
+
+  useEffect(() => () => clearAllShowTimers(), [])
+
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const onFocusOut = (e: FocusEvent) => {
+      const next = e.relatedTarget as Node | null
+      if (next && el.contains(next)) return
+      if (focusShowTimerRef.current != null) {
+        window.clearTimeout(focusShowTimerRef.current)
+        focusShowTimerRef.current = null
+      }
+      if (isPointerOverRef.current) return
+      hideTooltipIfPointerOpened()
+    }
+    el.addEventListener("focusout", onFocusOut)
+    return () => el.removeEventListener("focusout", onFocusOut)
+  }, [])
+
+  useEffect(() => {
+    if (!tooltipOpen) setChainedPointerEnter(false)
+  }, [tooltipOpen])
+
+  const schedulePointerOpen = () => {
+    clearPointerShowTimer()
+    if (isPointerTooltipChainActive()) {
+      openedViaPointerRef.current = true
+      setChainedPointerEnter(true)
+      registerPointerTooltipOpened()
+      setTooltipOpen(true)
+      return
+    }
+    setChainedPointerEnter(false)
+    pointerShowTimerRef.current = window.setTimeout(() => {
+      pointerShowTimerRef.current = null
+      openedViaPointerRef.current = true
+      registerPointerTooltipOpened()
+      setTooltipOpen(true)
+    }, TOOLTIP_POINTER_SHOW_MS)
+  }
+
+  const dismiss = () => {
+    clearAllShowTimers()
+    if (openedViaPointerRef.current) {
+      registerPointerTooltipClosed()
+      openedViaPointerRef.current = false
+    }
+    setTooltipOpen(false)
+  }
 
   const [xNudge, setXNudge] = useState(0)
   const [anchor, setAnchor] = useState<{ cx: number; right: number; top: number; bottom: number } | null>(null)
 
+  const skipEnterMotion = chainedPointerEnter || shouldReduceMotion
+
   useLayoutEffect(() => {
     if (!portal) return
-    if (!isHovered) return
+    if (!tooltipOpen) return
 
     const read = () => {
       const el = wrapRef.current
@@ -75,10 +198,10 @@ export function ShortcutHintWrap({
       window.removeEventListener("scroll", read, true)
       window.removeEventListener("resize", read)
     }
-  }, [isHovered, portal])
+  }, [tooltipOpen, portal])
 
   useEffect(() => {
-    if (!isHovered) {
+    if (!tooltipOpen) {
       setXNudge(0)
       return
     }
@@ -117,19 +240,17 @@ export function ShortcutHintWrap({
       window.removeEventListener("resize", measure)
       if (portal) window.removeEventListener("scroll", measure, true)
     }
-  }, [isHovered, portal, tooltipAlign, anchor?.cx, anchor?.right, anchor?.top, anchor?.bottom])
-
-  const dismiss = () => setIsHovered(false)
+  }, [tooltipOpen, portal, tooltipAlign, anchor?.cx, anchor?.right, anchor?.top, anchor?.bottom])
 
   const portaledTooltip =
     portal &&
     typeof document !== "undefined" &&
     createPortal(
       <AnimatePresence>
-        {isHovered && (
+        {tooltipOpen && (
           <motion.div
             key="shortcut-hint-portal"
-            initial={{ opacity: 0 }}
+            initial={skipEnterMotion ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={tooltipTransition}
@@ -153,7 +274,7 @@ export function ShortcutHintWrap({
               }}
             >
               <motion.div
-                initial={{ y: tooltipPosition === "above" ? 6 : -6 }}
+                initial={skipEnterMotion ? false : { y: tooltipPosition === "above" ? 6 : -6 }}
                 animate={{ y: 0 }}
                 exit={{ y: tooltipPosition === "above" ? 6 : -6 }}
                 transition={tooltipTransition}
@@ -172,19 +293,45 @@ export function ShortcutHintWrap({
       <div
         ref={wrapRef}
         className={cn("relative", className)}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-        onFocus={() => setIsHovered(true)}
-        onBlur={() => setIsHovered(false)}
+        onMouseEnter={() => {
+          isPointerOverRef.current = true
+          clearFocusShowTimer()
+          if (!prefersFinePointerHover()) return
+          schedulePointerOpen()
+        }}
+        onMouseLeave={() => {
+          isPointerOverRef.current = false
+          clearPointerShowTimer()
+          requestAnimationFrame(() => {
+            const el = wrapRef.current
+            if (!el) return
+            if (el.contains(document.activeElement)) return
+            hideTooltipIfPointerOpened()
+          })
+        }}
+        onFocusCapture={(e) => {
+          const target = e.target as HTMLElement | null
+          if (!target || !wrapRef.current?.contains(target)) return
+          clearPointerShowTimer()
+          if (isCoarsePointer()) return
+          if (typeof target.matches === "function" && !target.matches(":focus-visible")) return
+          clearFocusShowTimer()
+          focusShowTimerRef.current = window.setTimeout(() => {
+            focusShowTimerRef.current = null
+            openedViaPointerRef.current = false
+            setChainedPointerEnter(false)
+            setTooltipOpen(true)
+          }, TOOLTIP_FOCUS_SHOW_MS)
+        }}
       >
         {typeof children === "function" ? children({ dismiss }) : children}
 
         {!portal && (
           <AnimatePresence>
-            {isHovered && (
+            {tooltipOpen && (
               <motion.div
                 ref={tipRef}
-                initial={{ opacity: 0, y: tooltipPosition === "above" ? 6 : -6 }}
+                initial={skipEnterMotion ? false : { opacity: 0, y: tooltipPosition === "above" ? 6 : -6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: tooltipPosition === "above" ? 6 : -6 }}
                 transition={tooltipTransition}

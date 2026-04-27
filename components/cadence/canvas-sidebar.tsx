@@ -1,23 +1,27 @@
 "use client"
 
 import { useEffect, useRef, useState, useCallback } from "react"
-import { useReducedMotion } from "framer-motion"
 import { createPortal } from "react-dom"
+import { useReducedMotion } from "framer-motion"
 import { MoreHorizontal, Search, Pencil, Trash2, Plus, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { CanvasProject } from "./canvas-board"
-import { IconTooltipButton } from "./icon-tooltip-button"
 import { ProjectItem } from "./project-item"
 import { AddProjectPopover } from "./add-project-popover"
 import { ProjectColorSwatchGrid, PROJECT_COLORS } from "./project-palette"
+import { SidebarDisclosure } from "@/components/cadence/sidebar-disclosure"
+import {
+  getFloatingMenuSurfaceStyle,
+  useFloatingMenuEnterVisible,
+  useFloatingMenuRequestClose,
+  runAfterFloatingMenuExit,
+} from "@/components/cadence/floating-menu-portal"
 
 export { PROJECT_COLORS, ProjectColorSwatchGrid } from "./project-palette"
 
 interface CanvasSidebarProps {
   collapsed: boolean
-  onToggleSidebar: () => void
   projects: CanvasProject[]
-  projectTaskCounts: Record<string, number>
   activeProjectId: string | null
   onSelectProject: (projectId: string) => void
   /** Omitted when the app uses a fixed project catalog (no “add project”). */
@@ -31,24 +35,17 @@ interface CanvasSidebarProps {
     schedule?: string
     projectId?: string
   }) => void
-  appMode: import("./top-bar").AppMode
-  sidebarView: "tasks" | "agenda"
-  onSidebarModeClick: (view: "tasks" | "agenda" | "canvas") => void
 }
 
 export function CanvasSidebar({
   collapsed,
   projects,
-  projectTaskCounts,
   activeProjectId,
   onSelectProject,
   onAddProject,
   onUpdateProject,
   onDeleteProject,
   onQuickAddTask,
-  appMode,
-  sidebarView,
-  onSidebarModeClick,
 }: CanvasSidebarProps) {
   const [contentVisible, setContentVisible] = useState(!collapsed)
   const [actionsDropdown, setActionsDropdown] = useState<{
@@ -60,12 +57,9 @@ export function CanvasSidebar({
   const renameInputRef = useRef<HTMLInputElement | null>(null)
   const [search, setSearch] = useState("")
   const [projectsOpen, setProjectsOpen] = useState(true)
-  const projectsRef = useRef<HTMLDivElement>(null)
-  const [projectsHeight, setProjectsHeight] = useState<number | undefined>(undefined)
   const addProjectBtnRef = useRef<HTMLButtonElement>(null)
   const [addProjectOpen, setAddProjectOpen] = useState(false)
   const [addProjectPos, setAddProjectPos] = useState<{ top: number; left: number } | null>(null)
-  const reduceMotion = useReducedMotion() ?? false
 
   useEffect(() => {
     if (!collapsed) {
@@ -84,12 +78,6 @@ export function CanvasSidebar({
       renameInputRef.current?.select()
     })
   }, [renamingProjectId, projects])
-
-  useEffect(() => {
-    requestAnimationFrame(() => {
-      if (projectsRef.current) setProjectsHeight(projectsRef.current.scrollHeight)
-    })
-  }, [projects, renamingProjectId, actionsDropdown])
 
   const commitProjectRename = useCallback(
     (projectId: string, value: string) => {
@@ -110,15 +98,10 @@ export function CanvasSidebar({
   )
 
   return (
-    <aside
-      className={cn(
-        "flex h-full shrink-0 flex-col bg-background overflow-hidden transition-[width,opacity] duration-200 ease-out",
-        collapsed ? "w-0 opacity-0" : "w-[260px] opacity-100"
-      )}
-    >
-      <div className="relative flex-1 overflow-hidden">
+    <div className="relative h-full min-h-0 w-full overflow-hidden">
+      <div className="relative h-full min-h-0 overflow-hidden">
         {contentVisible && (
-          <div className="flex h-full flex-col">
+          <div className="flex h-full min-h-0 flex-col">
             <div className="flex items-center gap-2 px-3 pt-0 pb-3">
               <div className="flex h-8 flex-1 items-center gap-2 rounded-md bg-surface-2/60 px-2.5 text-sm text-text transition-colors hover:bg-surface">
                 <Search className="h-4 w-4 text-text-muted" />
@@ -172,50 +155,38 @@ export function CanvasSidebar({
                     )}
                   </div>
 
-                  <div
-                    ref={projectsRef}
-                    className={cn(
-                      "transform overflow-hidden",
-                      reduceMotion
-                        ? "transition-none"
-                        : "transition-[max-height,opacity,transform] duration-[200ms] ease-[var(--cadence-ease-slide)] motion-reduce:transition-none"
-                    )}
-                    style={{
-                      maxHeight: projectsOpen ? (projectsHeight ?? 2000) : 0,
-                      opacity: projectsOpen ? 1 : 0,
-                      transform: projectsOpen ? "translateY(0)" : "translateY(-4px)",
-                    }}
+                  <SidebarDisclosure
+                    show={projectsOpen}
+                    motionKey="canvas-sidebar-projects-section"
+                    indented={false}
+                    innerClassName="mt-0.5"
                   >
-                    <div>
-                      {projects.map((project) => {
-                        const count = projectTaskCounts[project.id] ?? 0
-                        const isRenaming = renamingProjectId === project.id
-                        return (
-                          <ProjectItem
-                            key={project.id}
-                            label={project.name}
-                            color={project.color}
-                            count={count > 0 ? count : undefined}
-                            hasChevron={false}
-                            isActive={project.id === activeProjectId}
-                            onRowClick={() => onSelectProject(project.id)}
-                            isRenaming={isRenaming}
-                            renameValue={renameValue}
-                            renameInputRef={renameInputRef}
-                            onRenameChange={setRenameValue}
-                            onRenameCommit={(value) => commitProjectRename(project.id, value)}
-                            onRenameCancel={() => setRenamingProjectId(null)}
-                            onPlusClick={
-                              onQuickAddTask ? () => onQuickAddTask({ projectId: project.id }) : undefined
-                            }
-                            onMoreClick={(anchor) => {
-                              setActionsDropdown({ projectId: project.id, anchor })
-                            }}
-                          />
-                        )
-                      })}
-                    </div>
-                  </div>
+                    {projects.map((project) => {
+                      const isRenaming = renamingProjectId === project.id
+                      return (
+                        <ProjectItem
+                          key={project.id}
+                          label={project.name}
+                          color={project.color}
+                          hasChevron={false}
+                          isActive={project.id === activeProjectId}
+                          onRowClick={() => onSelectProject(project.id)}
+                          isRenaming={isRenaming}
+                          renameValue={renameValue}
+                          renameInputRef={renameInputRef}
+                          onRenameChange={setRenameValue}
+                          onRenameCommit={(value) => commitProjectRename(project.id, value)}
+                          onRenameCancel={() => setRenamingProjectId(null)}
+                          onPlusClick={
+                            onQuickAddTask ? () => onQuickAddTask({ projectId: project.id }) : undefined
+                          }
+                          onMoreClick={(anchor) => {
+                            setActionsDropdown({ projectId: project.id, anchor })
+                          }}
+                        />
+                      )
+                    })}
+                  </SidebarDisclosure>
                 </>
               )}
             </div>
@@ -245,50 +216,18 @@ export function CanvasSidebar({
                     onUpdateProject(project.id, { color })
                   }}
                   onRename={() => {
-                    setActionsDropdown(null)
                     requestAnimationFrame(() => setRenamingProjectId(project.id))
                   }}
                   onDelete={() => {
-                    setActionsDropdown(null)
                     onDeleteProject(project.id)
                   }}
                 />
               )
             })()}
-
-            {/* Bottom toggle icons – mirror main sidebar */}
-            <div className="flex justify-start px-3 pb-3 pt-2">
-              <div className="relative inline-flex items-center rounded-lg bg-surface-2/80 px-2 py-2">
-                <IconTooltipButton
-                  iconUrl="/icons/taskicon.svg"
-                  label="Tasks"
-                  shortcut="T"
-                  isActive={appMode === "schedule" && sidebarView === "tasks"}
-                  onClick={() => onSidebarModeClick("tasks")}
-                  tooltipPosition="above"
-                />
-                <IconTooltipButton
-                  iconUrl="/icons/calendar.svg"
-                  label="Agenda"
-                  shortcut="A"
-                  isActive={appMode === "schedule" && sidebarView === "agenda"}
-                  onClick={() => onSidebarModeClick("agenda")}
-                  tooltipPosition="above"
-                />
-                <IconTooltipButton
-                  iconUrl="/icons/canvas.svg"
-                  label="Canvas"
-                  shortcut="C"
-                  isActive={appMode === "canvas"}
-                  onClick={() => onSidebarModeClick("canvas")}
-                  tooltipPosition="above"
-                />
-              </div>
-            </div>
           </div>
         )}
       </div>
-    </aside>
+    </div>
   )
 }
 
@@ -311,8 +250,10 @@ export function ProjectActionsDropdown({
 }) {
   const DROPDOWN_WIDTH = 200
   const GAP = 8
-  const [visible, setVisible] = useState(false)
+  const reduceMotion = useReducedMotion() ?? false
+  const [visible, setVisible] = useFloatingMenuEnterVisible(reduceMotion)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const requestClose = useFloatingMenuRequestClose(onClose, setVisible, reduceMotion)
 
   const fitsRight = anchor.right + GAP + DROPDOWN_WIDTH <= window.innerWidth - GAP
   const computedLeft = fitsRight ? anchor.right + GAP : anchor.left - DROPDOWN_WIDTH - GAP
@@ -320,27 +261,23 @@ export function ProjectActionsDropdown({
   const origin = fitsRight ? "top left" : "top right"
 
   useEffect(() => {
-    requestAnimationFrame(() => setVisible(true))
-  }, [])
-
-  useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) onClose()
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) requestClose()
     }
     const timer = setTimeout(() => document.addEventListener("mousedown", handleClick), 0)
     return () => {
       clearTimeout(timer)
       document.removeEventListener("mousedown", handleClick)
     }
-  }, [onClose])
+  }, [requestClose])
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose()
+      if (e.key === "Escape") requestClose()
     }
     document.addEventListener("keydown", handleKey)
     return () => document.removeEventListener("keydown", handleKey)
-  }, [onClose])
+  }, [requestClose])
 
   // uses PROJECT_COLORS + ProjectColorSwatchGrid (shared)
 
@@ -351,10 +288,7 @@ export function ProjectActionsDropdown({
       style={{
         top: computedTop,
         left: computedLeft,
-        opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0) scale(1)" : "translateY(-4px) scale(0.98)",
-        transition: "opacity 160ms cubic-bezier(0.2,0.8,0.2,1), transform 160ms cubic-bezier(0.2,0.8,0.2,1)",
-        transformOrigin: origin,
+        ...getFloatingMenuSurfaceStyle({ visible, transformOrigin: origin, reduceMotion }),
       }}
     >
       <div className="flex flex-col items-start">
@@ -370,7 +304,12 @@ export function ProjectActionsDropdown({
 
       <button
         type="button"
-        onClick={() => onRename()}
+        onClick={() =>
+          runAfterFloatingMenuExit(reduceMotion, setVisible, () => {
+            onRename()
+            onClose()
+          })
+        }
         className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1 text-xs text-text transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:bg-surface-2"
       >
         <Pencil className="h-3 w-3 text-text-muted" />
@@ -382,7 +321,10 @@ export function ProjectActionsDropdown({
         disabled={deleteDisabled}
         onClick={() => {
           if (deleteDisabled) return
-          onDelete()
+          runAfterFloatingMenuExit(reduceMotion, setVisible, () => {
+            onDelete()
+            onClose()
+          })
         }}
         className={cn(
           "mt-0.5 flex w-full items-center gap-2.5 rounded-sm px-2 py-1 text-xs transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)]",

@@ -4,15 +4,21 @@ import * as React from 'react'
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 
 import { cn } from '@/lib/utils'
+import {
+  TOOLTIP_POINTER_SHOW_MS,
+  TOOLTIP_RADIX_SKIP_DELAY_MS,
+} from '@/lib/cadence-motion'
 
 function TooltipProvider({
-  delayDuration = 0,
+  delayDuration = TOOLTIP_POINTER_SHOW_MS,
+  skipDelayDuration = TOOLTIP_RADIX_SKIP_DELAY_MS,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
   return (
     <TooltipPrimitive.Provider
       data-slot="tooltip-provider"
       delayDuration={delayDuration}
+      skipDelayDuration={skipDelayDuration}
       {...props}
     />
   )

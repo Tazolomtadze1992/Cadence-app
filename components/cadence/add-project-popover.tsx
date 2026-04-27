@@ -2,7 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom"
+import { useReducedMotion } from "framer-motion"
 import { cn } from "@/lib/utils"
+import { FLOATING_MENU_CLOSE_MS, FLOATING_MENU_EASE_CSS, FLOATING_MENU_OPEN_MS } from "@/lib/cadence-motion"
 import { ProjectColorSwatchGrid, PROJECT_COLORS } from "./project-palette"
 
 export function AddProjectPopover({
@@ -19,12 +21,32 @@ export function AddProjectPopover({
   const [name, setName] = useState("")
   const [color, setColor] = useState<string>(PROJECT_COLORS[0] ?? "#94a3b8")
   const [error, setError] = useState<string | null>(null)
+  const [visible, setVisible] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const reduceMotion = useReducedMotion() ?? false
 
   useEffect(() => {
+    if (reduceMotion) {
+      setVisible(true)
+      const id = window.setTimeout(() => inputRef.current?.focus(), 0)
+      return () => window.clearTimeout(id)
+    }
+    const raf = requestAnimationFrame(() => setVisible(true))
     const id = window.setTimeout(() => inputRef.current?.focus(), 0)
-    return () => window.clearTimeout(id)
-  }, [])
+    return () => {
+      cancelAnimationFrame(raf)
+      window.clearTimeout(id)
+    }
+  }, [reduceMotion])
+
+  const requestClose = useCallback(() => {
+    if (reduceMotion) {
+      onClose()
+      return
+    }
+    setVisible(false)
+    window.setTimeout(() => onClose(), FLOATING_MENU_CLOSE_MS)
+  }, [onClose, reduceMotion])
 
   const lowerExisting = useMemo(
     () => existingNames.map((n) => n.trim().toLowerCase()).filter(Boolean),
@@ -55,8 +77,19 @@ export function AddProjectPopover({
 
   return createPortal(
     <div
-      className="fixed z-[120] w-fit rounded-xl border border-border/50 bg-background p-3 shadow-lg"
-      style={{ top: pos.top, left: pos.left }}
+      className="fixed z-[120] w-fit rounded-xl border border-border/50 bg-background p-3 shadow-lg motion-reduce:transition-none will-change-transform will-change-opacity"
+      style={{
+        top: pos.top,
+        left: pos.left,
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0) scale(1)" : "translateY(-4px) scale(0.98)",
+        transition: reduceMotion
+          ? "none"
+          : visible
+            ? `opacity ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}`
+            : `opacity ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}`,
+        transformOrigin: "top left",
+      }}
     >
       <div className="flex flex-col items-start">
         <div className="mb-2 w-full">
@@ -73,7 +106,7 @@ export function AddProjectPopover({
                 handleSave()
               } else if (e.key === "Escape") {
                 e.preventDefault()
-                onClose()
+                requestClose()
               }
             }}
             className="w-[180px] rounded-md border border-border/60 bg-surface-2 px-2 py-1.5 text-xs text-text outline-none placeholder:text-text-muted"
@@ -89,7 +122,7 @@ export function AddProjectPopover({
         <div className="flex w-full items-center justify-end gap-2">
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="rounded border border-border/50 bg-surface-2 px-3 py-1.5 text-[11px] font-medium text-text-muted transition-colors hover:bg-surface"
           >
             Discard

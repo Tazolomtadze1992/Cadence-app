@@ -5,6 +5,8 @@ import { createPortal } from "react-dom"
 import { useReducedMotion } from "framer-motion"
 import {
   CADENCE_EASE_OUT_CSS,
+  CALENDAR_CARD_POPOVER_CHAIN_GRACE_MS,
+  CALENDAR_CARD_POPOVER_SHOW_MS,
   POPOVER_ENTER_MS,
   POPOVER_EXIT_MS,
   POPOVER_HIDE_MS,
@@ -109,7 +111,33 @@ type PopoverState = {
   eventId: string
   pos: { top: number; left: number }
   visible: boolean
+  /** True when opened from chained card-to-card hover — suppress enter animation. */
+  chainedEnter?: boolean
 } | null
+
+let openCalendarCardPopoverCount = 0
+let calendarCardPopoverChainGraceUntil = 0
+
+function isCalendarCardPopoverChainActive(): boolean {
+  return openCalendarCardPopoverCount > 0 || Date.now() < calendarCardPopoverChainGraceUntil
+}
+
+function registerCalendarCardPopoverOpened(): void {
+  openCalendarCardPopoverCount++
+  calendarCardPopoverChainGraceUntil = 0
+}
+
+function registerCalendarCardPopoverClosed(): void {
+  openCalendarCardPopoverCount = Math.max(0, openCalendarCardPopoverCount - 1)
+  if (openCalendarCardPopoverCount === 0) {
+    calendarCardPopoverChainGraceUntil = Date.now() + CALENDAR_CARD_POPOVER_CHAIN_GRACE_MS
+  }
+}
+
+function prefersFinePointerHover(): boolean {
+  if (typeof window === "undefined") return false
+  return window.matchMedia("(hover: hover) and (pointer: fine)").matches
+}
 
 /** First visit to a card: split top vs bottom. */
 const ZONE_SPLIT_DEFAULT = 0.65
@@ -145,17 +173,19 @@ function CalendarEventDetailPopover({
   dayDate,
   durationMinutes,
   reduceMotion,
+  chainedEnter = false,
 }: {
   popover: NonNullable<PopoverState>
   ev: CalendarEvent
   dayDate: Date | undefined
   durationMinutes: number
   reduceMotion: boolean
+  chainedEnter?: boolean
 }) {
-  const [entered, setEntered] = useState(() => reduceMotion)
+  const [entered, setEntered] = useState(() => reduceMotion || chainedEnter)
 
   useEffect(() => {
-    if (reduceMotion) {
+    if (reduceMotion || chainedEnter) {
       setEntered(true)
       return
     }
@@ -169,7 +199,7 @@ function CalendarEventDetailPopover({
       cancelAnimationFrame(raf1)
       cancelAnimationFrame(raf2)
     }
-  }, [ev.id, reduceMotion])
+  }, [ev.id, reduceMotion, chainedEnter])
 
   const motionOpen = popover.visible && (reduceMotion || entered)
   const transitionMs = motionOpen ? POPOVER_ENTER_MS : POPOVER_EXIT_MS
@@ -315,7 +345,10 @@ export function CalendarGrid({
   const hoverRef = useRef<HoverState | null>(null)
   hoverRef.current = hover
   const [popover, setPopover] = useState<PopoverState>(null)
+  const popoverLiveRef = useRef<PopoverState>(null)
+  popoverLiveRef.current = popover
   const popoverHideTimer = useRef<number | null>(null)
+  const popoverShowTimerRef = useRef<number | null>(null)
   const bottomZoneHideTimer = useRef<number | null>(null)
   const isDragging = useRef(false)
   const reduceMotion = useReducedMotion() ?? false
@@ -378,22 +411,49 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
     return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
   }, [displayAnchor])
 
+  const clearPopoverShowTimer = useCallback(() => {
+    if (popoverShowTimerRef.current != null) {
+      window.clearTimeout(popoverShowTimerRef.current)
+      popoverShowTimerRef.current = null
+    }
+  }, [])
+
   const hidePopoverSoon = useCallback(() => {
+    clearPopoverShowTimer()
     if (popoverHideTimer.current) window.clearTimeout(popoverHideTimer.current)
-    setPopover((prev) => (prev ? { ...prev, visible: false } : prev))
+    setPopover((prev) => {
+      if (prev?.visible) {
+        registerCalendarCardPopoverClosed()
+      }
+      return prev ? { ...prev, visible: false } : prev
+    })
     popoverHideTimer.current = window.setTimeout(() => {
       setPopover(null)
     }, POPOVER_HIDE_MS)
-  }, [])
+  }, [clearPopoverShowTimer])
 
-  const showPopoverNow = useCallback((eventId: string, pos: { top: number; left: number }) => {
-    if (popoverHideTimer.current) window.clearTimeout(popoverHideTimer.current)
-    if (bottomZoneHideTimer.current) {
-      window.clearTimeout(bottomZoneHideTimer.current)
-      bottomZoneHideTimer.current = null
-    }
-    setPopover({ eventId, pos, visible: true })
-  }, [])
+  const showPopoverDirect = useCallback(
+    (eventId: string, pos: { top: number; left: number }, chainedEnter: boolean) => {
+      clearPopoverShowTimer()
+      if (popoverHideTimer.current) {
+        window.clearTimeout(popoverHideTimer.current)
+        popoverHideTimer.current = null
+      }
+      if (bottomZoneHideTimer.current) {
+        window.clearTimeout(bottomZoneHideTimer.current)
+        bottomZoneHideTimer.current = null
+      }
+      setPopover((prev) => {
+        const wasVisible = prev?.visible === true
+        const openingFromCold = !wasVisible
+        if (openingFromCold) {
+          registerCalendarCardPopoverOpened()
+        }
+        return { eventId, pos, visible: true, chainedEnter }
+      })
+    },
+    [clearPopoverShowTimer]
+  )
 
   const scheduleHideFromBottomZone = useCallback(() => {
     if (bottomZoneHideTimer.current) window.clearTimeout(bottomZoneHideTimer.current)
@@ -406,6 +466,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
   const handleEventPointerMove = useCallback(
     (e: React.PointerEvent, ev: CalendarEvent) => {
       if (isDragging.current) return
+      if (pendingEventMove) return
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
       const yRel = e.clientY - rect.top
       const ratio = rect.height > 0 ? yRel / rect.height : 0
@@ -422,33 +483,71 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
       const justEnteredBottom =
         zone === "bottom" && (prev?.eventId !== ev.id || prev.zone !== "bottom")
       if (zone === "top") {
-        showPopoverNow(ev.id, { top: rect.top, left: rect.left - 8 })
+        const pos = { top: rect.top, left: rect.left - 8 }
+        if (bottomZoneHideTimer.current) {
+          window.clearTimeout(bottomZoneHideTimer.current)
+          bottomZoneHideTimer.current = null
+        }
+
+        const cur = popoverLiveRef.current
+        if (cur?.visible && cur.eventId === ev.id) {
+          showPopoverDirect(ev.id, pos, cur.chainedEnter ?? false)
+          return
+        }
+
+        if (!prefersFinePointerHover()) {
+          showPopoverDirect(ev.id, pos, isCalendarCardPopoverChainActive())
+          return
+        }
+
+        if (isCalendarCardPopoverChainActive()) {
+          showPopoverDirect(ev.id, pos, true)
+          return
+        }
+
+        clearPopoverShowTimer()
+        popoverShowTimerRef.current = window.setTimeout(() => {
+          popoverShowTimerRef.current = null
+          if (isDragging.current) return
+          showPopoverDirect(ev.id, pos, false)
+        }, CALENDAR_CARD_POPOVER_SHOW_MS)
       } else if (justEnteredBottom) {
+        clearPopoverShowTimer()
         scheduleHideFromBottomZone()
       }
     },
-    [scheduleHideFromBottomZone, showPopoverNow]
+    [clearPopoverShowTimer, pendingEventMove, scheduleHideFromBottomZone, showPopoverDirect]
   )
 
   const handleEventPointerLeave = useCallback(() => {
     if (isDragging.current) return
+    clearPopoverShowTimer()
     if (bottomZoneHideTimer.current) {
       window.clearTimeout(bottomZoneHideTimer.current)
       bottomZoneHideTimer.current = null
     }
     setHover(null)
     hidePopoverSoon()
-  }, [hidePopoverSoon])
+  }, [clearPopoverShowTimer, hidePopoverSoon])
 
   useEffect(() => {
     if (!drag) return
     setHover(null)
+    if (popoverShowTimerRef.current != null) {
+      window.clearTimeout(popoverShowTimerRef.current)
+      popoverShowTimerRef.current = null
+    }
     if (popoverHideTimer.current) window.clearTimeout(popoverHideTimer.current)
     if (bottomZoneHideTimer.current) {
       window.clearTimeout(bottomZoneHideTimer.current)
       bottomZoneHideTimer.current = null
     }
-    setPopover(null)
+    setPopover((prev) => {
+      if (prev?.visible) {
+        registerCalendarCardPopoverClosed()
+      }
+      return null
+    })
   }, [drag])
 
   useEffect(() => {
@@ -460,6 +559,10 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
 
   useEffect(() => {
     return () => {
+      if (popoverShowTimerRef.current != null) {
+        window.clearTimeout(popoverShowTimerRef.current)
+        popoverShowTimerRef.current = null
+      }
       if (popoverHideTimer.current) window.clearTimeout(popoverHideTimer.current)
       if (bottomZoneHideTimer.current) window.clearTimeout(bottomZoneHideTimer.current)
     }
@@ -524,12 +627,13 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
     (e: React.PointerEvent, dayIndex: number) => {
       if (e.button !== 0) return
       e.preventDefault()
+      clearPopoverShowTimer()
       const minutes = getMinutesFromY(e.clientY, dayIndex)
       isDragging.current = true
       setPointerPos({ x: e.clientX, y: e.clientY })
       setDrag({ type: "create", dayIndex, anchorMinutes: minutes, currentMinutes: minutes + SNAP })
     },
-    [getMinutesFromY]
+    [clearPopoverShowTimer, getMinutesFromY]
   )
 
   const handleEventPointerDown = useCallback(
@@ -537,6 +641,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
       if (e.button !== 0) return
       e.stopPropagation()
       e.preventDefault()
+      clearPopoverShowTimer()
       if (ev.startMinutes == null || ev.endMinutes == null) return
       ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
       const minutesAtPointer = getMinutesFromY(e.clientY, ev.dayIndex)
@@ -549,13 +654,14 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
         offsetMinutes,
       })
     },
-    [getMinutesFromY]
+    [clearPopoverShowTimer, getMinutesFromY]
   )
 
   const handleResizePointerDown = useCallback((e: React.PointerEvent, ev: CalendarEvent) => {
     if (e.button !== 0) return
     e.stopPropagation()
     e.preventDefault()
+    clearPopoverShowTimer()
     if (ev.startMinutes == null || ev.endMinutes == null) return
     ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
     isDragging.current = true
@@ -566,7 +672,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
       startMinutes: ev.startMinutes,
       endMinutes: ev.endMinutes,
     })
-  }, [])
+  }, [clearPopoverShowTimer])
 
   useEffect(() => {
     const hasActivePointer = drag || pendingEventMove
@@ -683,7 +789,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
       {/* Day headers */}
       <div className="flex shrink-0">
         <div className="w-14 shrink-0" />
-        <div className="flex flex-1 border-b border-border/20">
+        <div className="flex flex-1 border-b border-border/30">
           {weekDays.map((day) => (
             <div
               key={day.label}
@@ -731,7 +837,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
               return (
                 <div
                   key={`line-${hour}`}
-                  className="pointer-events-none absolute left-0 right-0 border-t border-border/20"
+                  className="pointer-events-none absolute left-0 right-0 border-t border-border/30"
                   style={{ top: i * HOUR_HEIGHT }}
                 />
               )
@@ -740,11 +846,11 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
             {/* Day columns */}
             {weekDays.map((day, dayIndex) => (
               <div
-                key={day.label}
+                key={format(weekDates[dayIndex], "yyyy-MM-dd")}
                 ref={(el) => {
                   columnRefs.current[dayIndex] = el
                 }}
-                className="relative flex-1 border-l border-border/20 select-none"
+                className="relative flex-1 border-l border-border/30 select-none"
                 onPointerDown={(e) => handleGridPointerDown(e, dayIndex)}
               >
                 {HOURS.map((hour) => (
@@ -914,6 +1020,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                   dayDate={dayDate}
                   durationMinutes={durationMinutes}
                   reduceMotion={reduceMotion}
+                  chainedEnter={popover.chainedEnter ?? false}
                 />
               )
             })()}

@@ -5,9 +5,9 @@ import { createPortal } from "react-dom"
 import { useReducedMotion } from "framer-motion"
 import { cn } from "@/lib/utils"
 import {
-  CADENCE_EASE_OUT_CSS,
-  DROPDOWN_CLOSE_MS,
-  DROPDOWN_OPEN_MS,
+  FLOATING_MENU_CLOSE_MS,
+  FLOATING_MENU_EASE_CSS,
+  FLOATING_MENU_OPEN_MS,
 } from "@/lib/cadence-motion"
 import { User, CornerDownLeft, Tag } from "lucide-react"
 import { Calendar } from "@/components/ui/calendar"
@@ -83,8 +83,6 @@ function TriggerValue({ children }: { children: React.ReactNode }) {
 function IconImg({ src, className }: { src: string; className?: string }) {
   return <img src={src} alt="" className={cn("h-4 w-4 shrink-0", className)} />
 }
-
-const DROPDOWN_EASE_OUT = CADENCE_EASE_OUT_CSS
 
 export interface TaskEditorInitialData {
   dayIndex?: number
@@ -222,6 +220,47 @@ export function TaskEditorPanel({
 
   const canSubmit = task.title.trim().length > 0
 
+  const submittingRef = useRef(false)
+
+  /** Same path as the orange Add task / Edit task button. */
+  const submitTask = useCallback(() => {
+    if (!canSubmit || submittingRef.current) return
+    submittingRef.current = true
+    try {
+      if (isEditMode && editingTask) {
+        onEditSave?.(editingTask.id, { ...task, dayIndex })
+      } else {
+        onSave?.({ ...task, dayIndex })
+      }
+      onClose()
+    } finally {
+      submittingRef.current = false
+    }
+  }, [
+    canSubmit,
+    dayIndex,
+    editingTask,
+    isEditMode,
+    onClose,
+    onEditSave,
+    onSave,
+    task,
+  ])
+
+  function handleEditorRootKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "Enter") return
+    if (e.repeat) return
+    if (activeDropdown != null) return
+    const target = e.target as HTMLElement | null
+    if (!target) return
+    // Notes are a single-line `<input>` today; plain Enter saves. If this becomes a
+    // multiline `<textarea>`, keep newlines on Enter and use Cmd/Ctrl+Enter to submit.
+    if (target.tagName === "TEXTAREA" && !(e.metaKey || e.ctrlKey)) return
+    if (!canSubmit) return
+    e.preventDefault()
+    submitTask()
+  }
+
   // When: Today / Tomorrow / Pick a date (picked uses due-soon icon + formatted date)
   const isPickedDate = task.schedule === "picked" && task.scheduledDate
   const scheduleDisplayLabel =
@@ -240,7 +279,10 @@ export function TaskEditorPanel({
         : PICK_DATE_ICON
 
   return (
-    <div onClick={() => setActiveDropdown(null)}>
+    <div
+      onClick={() => setActiveDropdown(null)}
+      onKeyDown={handleEditorRootKeyDown}
+    >
       {/* Task title */}
       <div className="px-6 pt-5 pb-4">
         <div className="flex items-start gap-3">
@@ -573,15 +615,7 @@ export function TaskEditorPanel({
           {/* Main CTA (4px radius) */}
           <button
             disabled={!canSubmit}
-            onClick={() => {
-              if (!canSubmit) return
-              if (isEditMode && editingTask) {
-                onEditSave?.(editingTask.id, { ...task, dayIndex })
-              } else {
-                onSave?.({ ...task, dayIndex })
-              }
-              onClose()
-            }}
+            onClick={submitTask}
             className={cn(
               "flex items-center gap-1.5 rounded px-4 py-2 text-xs font-medium transition-all",
               canSubmit
@@ -699,7 +733,7 @@ function TagAutocomplete({
     const t = window.setTimeout(() => {
       setTagRenderPortal(false)
       setTagPos(null)
-    }, DROPDOWN_CLOSE_MS + 100)
+    }, FLOATING_MENU_CLOSE_MS + 100)
     return () => clearTimeout(t)
   }, [suggestionsOpen, tagVisible, tagRenderPortal, reducedMotionTags])
 
@@ -729,6 +763,7 @@ function TagAutocomplete({
       setHighlightIndex((i) => Math.max(i - 1, 0))
     } else if (e.key === "Enter") {
       e.preventDefault()
+      e.stopPropagation()
       if (highlightIndex < filtered.length) selectTag(filtered[highlightIndex].name)
       else if (showCreate) createTag()
     } else if (e.key === "Escape") {
@@ -817,8 +852,8 @@ function TagAutocomplete({
               transition: reducedMotionTags
                 ? "none"
                 : tagVisible
-                  ? `opacity ${DROPDOWN_OPEN_MS}ms ${DROPDOWN_EASE_OUT}, transform ${DROPDOWN_OPEN_MS}ms ${DROPDOWN_EASE_OUT}`
-                  : `opacity ${DROPDOWN_CLOSE_MS}ms ${DROPDOWN_EASE_OUT}, transform ${DROPDOWN_CLOSE_MS}ms ${DROPDOWN_EASE_OUT}`,
+                  ? `opacity ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}`
+                  : `opacity ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}`,
               transformOrigin: "top left",
             }}
             onMouseDown={(e) => e.preventDefault()}
@@ -933,7 +968,7 @@ function DropdownField({
     const t = window.setTimeout(() => {
       setRenderPortal(false)
       setPos(null)
-    }, DROPDOWN_CLOSE_MS + 100)
+    }, FLOATING_MENU_CLOSE_MS + 100)
     return () => clearTimeout(t)
   }, [isOpen, visible, renderPortal, reducedMotion])
 
@@ -982,8 +1017,8 @@ function DropdownField({
               transition: reducedMotion
                 ? "none"
                 : visible
-                  ? `opacity ${DROPDOWN_OPEN_MS}ms ${DROPDOWN_EASE_OUT}, transform ${DROPDOWN_OPEN_MS}ms ${DROPDOWN_EASE_OUT}`
-                  : `opacity ${DROPDOWN_CLOSE_MS}ms ${DROPDOWN_EASE_OUT}, transform ${DROPDOWN_CLOSE_MS}ms ${DROPDOWN_EASE_OUT}`,
+                  ? `opacity ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}`
+                  : `opacity ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}`,
               transformOrigin: openUp ? "bottom left" : "top left",
             }}
             onClick={(e) => e.stopPropagation()}

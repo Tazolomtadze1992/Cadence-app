@@ -24,6 +24,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  TOOLTIP_POINTER_SHOW_MS,
+  TOOLTIP_RADIX_SKIP_DELAY_MS,
+} from '@/lib/cadence-motion'
 
 const SIDEBAR_COOKIE_NAME = 'sidebar_state'
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
@@ -128,7 +132,10 @@ function SidebarProvider({
 
   return (
     <SidebarContext.Provider value={contextValue}>
-      <TooltipProvider delayDuration={0}>
+      <TooltipProvider
+        delayDuration={TOOLTIP_POINTER_SHOW_MS}
+        skipDelayDuration={TOOLTIP_RADIX_SKIP_DELAY_MS}
+      >
         <div
           data-slot="sidebar-wrapper"
           style={

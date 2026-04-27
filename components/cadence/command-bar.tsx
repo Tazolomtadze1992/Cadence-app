@@ -10,20 +10,34 @@ import {
   type ReactNode,
   type CSSProperties,
   type TransitionEvent,
+  type ChangeEvent,
 } from "react"
 import { createPortal } from "react-dom"
 import { motion, useReducedMotion } from "framer-motion"
-import { Plus, ChevronLeft, ChevronRight, ArrowRight, ArrowLeft, Check, Trash2, Layers } from "lucide-react"
+import {
+  Plus,
+  ChevronLeft,
+  ChevronRight,
+  ArrowRight,
+  ArrowLeft,
+  Check,
+  Trash2,
+  Layers,
+  Image as ImageIcon,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { TaskEditorPanel, priorityOptions } from "@/components/cadence/task-editor-modal"
 import type { TaskEditorInitialData, TaskEditorSaveData, EditingTaskData } from "@/components/cadence/task-editor-modal"
 import type { CanvasProject } from "@/components/cadence/canvas-board"
+import type { AppMode } from "@/components/cadence/top-bar"
 import { ShortcutHintWrap } from "@/components/cadence/icon-tooltip-button"
 import {
-  CHOOSER_CLOSE_MS,
-  CHOOSER_OPEN_MS,
   CADENCE_EASE_OUT,
   CADENCE_EASE_OUT_CSS,
+  DOCK_SCHEDULE_REVEAL_DELAY_MS,
+  FLOATING_MENU_CLOSE_MS,
+  FLOATING_MENU_EASE_CSS,
+  FLOATING_MENU_OPEN_MS,
   SHELL_CLOSE_MS,
   SHELL_CLOSE_S,
   SHELL_OPEN_MS,
@@ -42,7 +56,6 @@ import {
 const COLLAPSED_HEIGHT = 52
 
 const SHELL_BEZIER_CSS = CADENCE_EASE_OUT_CSS
-const CHOOSER_EASE_CSS = CADENCE_EASE_OUT_CSS
 
 // ─── Date Parsing ────────────────────────────────────────────────────────────
 function parseNaturalDate(input: string): Date | null {
@@ -212,8 +225,8 @@ function BulkChooserPopover({
         transition: reducedMotion
           ? "none"
           : visible
-            ? `opacity ${CHOOSER_OPEN_MS}ms ${CHOOSER_EASE_CSS}, transform ${CHOOSER_OPEN_MS}ms ${CHOOSER_EASE_CSS}`
-            : `opacity ${CHOOSER_CLOSE_MS}ms ${CHOOSER_EASE_CSS}, transform ${CHOOSER_CLOSE_MS}ms ${CHOOSER_EASE_CSS}`,
+            ? `opacity ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}`
+            : `opacity ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}`,
         transformOrigin,
       }}
       onMouseDown={(e) => e.preventDefault()}
@@ -239,6 +252,10 @@ export function CommandBar({
   projects,
   bulkSelection,
   onEditorOpen,
+  dock = "fixed",
+  appMode = "schedule",
+  onAddCanvasNote,
+  onAddCanvasImageFile,
 }: {
   externalOpen?: TaskEditorInitialData | null
   onExternalOpenHandled?: () => void
@@ -254,6 +271,11 @@ export function CommandBar({
   bulkSelection?: CommandBarBulkSelection | null
   /** Fired when the task editor shell opens from this bar (e.g. Add new). */
   onEditorOpen?: () => void
+  /** `inline`: shell only (parent provides positioning / mode cross-fade). */
+  dock?: "fixed" | "inline"
+  appMode?: AppMode
+  onAddCanvasNote?: () => void
+  onAddCanvasImageFile?: (file: File) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   /** Keeps `TaskEditorPanel` mounted through close animation until shell height finishes. */
@@ -263,34 +285,118 @@ export function CommandBar({
   const contentRef = useRef<HTMLDivElement>(null)
   const idleStripMeasureRef = useRef<HTMLDivElement>(null)
   const bulkStripMeasureRef = useRef<HTMLDivElement>(null)
+  const dateStripMeasureRef = useRef<HTMLDivElement>(null)
   const [idleStripW, setIdleStripW] = useState(0)
   const [bulkStripW, setBulkStripW] = useState(0)
+  const [dateStripW, setDateStripW] = useState(0)
   const [expandedHeight, setExpandedHeight] = useState(440)
   const shouldReduceMotion = useReducedMotion()
 
   // "Go to date" search mode
   const [dateSearchMode, setDateSearchMode] = useState(false)
   const [dateQuery, setDateQuery] = useState("")
+  /** Keeps suggestion row height until after exit opacity + shell timing (see exitDateSearchMode). */
+  const [deferDateQueryClear, setDeferDateQueryClear] = useState(false)
+  const dateQueryClearTimerRef = useRef<number | null>(null)
   const dateInputRef = useRef<HTMLInputElement>(null)
 
   const parsedDate = useMemo(() => parseNaturalDate(dateQuery), [dateQuery])
 
-  // Focus input when entering date search mode
+  const clearDateQueryClearTimer = useCallback(() => {
+    if (dateQueryClearTimerRef.current != null) {
+      window.clearTimeout(dateQueryClearTimerRef.current)
+      dateQueryClearTimerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => () => clearDateQueryClearTimer(), [clearDateQueryClearTimer])
+
+  // Focus input when entering date search mode; blur when leaving
   useEffect(() => {
     if (dateSearchMode) {
       setTimeout(() => dateInputRef.current?.focus(), 50)
+    } else {
+      dateInputRef.current?.blur()
     }
   }, [dateSearchMode])
 
-  const exitDateSearchMode = useCallback(() => {
-    setDateSearchMode(false)
-    setDateQuery("")
-  }, [])
+  const enterDateSearchMode = useCallback(() => {
+    clearDateQueryClearTimer()
+    setDeferDateQueryClear(false)
+    setDateSearchMode(true)
+  }, [clearDateQueryClearTimer])
+
+  const exitDateSearchMode = useCallback(
+    (immediate = false) => {
+      clearDateQueryClearTimer()
+      setDeferDateQueryClear(false)
+      setDateSearchMode(false)
+      if (immediate) {
+        setDateQuery("")
+        return
+      }
+      if (dateQuery.trim()) {
+        setDeferDateQueryClear(true)
+        const ms = shouldReduceMotion ? 0 : SHELL_CLOSE_MS
+        dateQueryClearTimerRef.current = window.setTimeout(() => {
+          dateQueryClearTimerRef.current = null
+          setDateQuery("")
+          setDeferDateQueryClear(false)
+        }, ms)
+      } else {
+        setDateQuery("")
+      }
+    },
+    [clearDateQueryClearTimer, dateQuery, shouldReduceMotion]
+  )
 
   const [bulkPicker, setBulkPicker] = useState<null | { kind: "project" | "priority"; rect: DOMRect }>(
     null
   )
   const bulkWasActiveRef = useRef(false)
+  const canvasStripMeasureRef = useRef<HTMLDivElement>(null)
+  const canvasFileInputRef = useRef<HTMLInputElement>(null)
+  const [canvasStripW, setCanvasStripW] = useState(0)
+  /** After canvas→schedule: delay idle/bulk opacity in so shell width can lead (ms). */
+  const [scheduleRevealDelayMs, setScheduleRevealDelayMs] = useState(0)
+  const wasCanvasRef = useRef(false)
+
+  const isCanvas = appMode === "canvas"
+
+  useLayoutEffect(() => {
+    const prev = wasCanvasRef.current
+    wasCanvasRef.current = isCanvas
+    if (shouldReduceMotion) {
+      setScheduleRevealDelayMs(0)
+      return
+    }
+    if (isCanvas) {
+      setScheduleRevealDelayMs(0)
+      return
+    }
+    if (prev && !isCanvas) {
+      setScheduleRevealDelayMs(DOCK_SCHEDULE_REVEAL_DELAY_MS)
+      const id = window.setTimeout(
+        () => setScheduleRevealDelayMs(0),
+        DOCK_SCHEDULE_REVEAL_DELAY_MS + SHELL_OPEN_MS + 40
+      )
+      return () => window.clearTimeout(id)
+    }
+  }, [isCanvas, shouldReduceMotion])
+
+  /** Canvas mode: close schedule-only surfaces so one shell can morph. */
+  useEffect(() => {
+    if (!isCanvas) return
+    exitDateSearchMode(true)
+    setBulkPicker(null)
+  }, [isCanvas, exitDateSearchMode])
+
+  useEffect(() => {
+    if (!isCanvas || !expanded) return
+    setExpanded(false)
+    setInitialData(null)
+    onEditDone?.()
+  }, [isCanvas, expanded, onEditDone])
 
   useEffect(() => {
     const on = Boolean(bulkSelection)
@@ -310,23 +416,21 @@ export function CommandBar({
 
   // Handle external open requests (e.g. from drag-create)
   useEffect(() => {
-    if (externalOpen) {
-      setInitialData(externalOpen)
-      setEditorKey((k) => k + 1)
-      setMountEditor(true)
-      setExpanded(true)
-      onExternalOpenHandled?.()
-    }
-  }, [externalOpen, onExternalOpenHandled])
+    if (!externalOpen || isCanvas) return
+    setInitialData(externalOpen)
+    setEditorKey((k) => k + 1)
+    setMountEditor(true)
+    setExpanded(true)
+    onExternalOpenHandled?.()
+  }, [externalOpen, onExternalOpenHandled, isCanvas])
 
   // Handle edit mode open (double-click on event)
   useEffect(() => {
-    if (editingTask) {
-      setEditorKey((k) => k + 1)
-      setMountEditor(true)
-      setExpanded(true)
-    }
-  }, [editingTask])
+    if (!editingTask || isCanvas) return
+    setEditorKey((k) => k + 1)
+    setMountEditor(true)
+    setExpanded(true)
+  }, [editingTask, isCanvas])
 
   const handleClose = useCallback(() => {
     setExpanded(false)
@@ -335,12 +439,13 @@ export function CommandBar({
   }, [onEditDone])
 
   const openNewTaskEditor = useCallback(() => {
+    if (isCanvas) return
     onEditorOpen?.()
     setInitialData({ noDuration: true })
     setEditorKey((k) => k + 1)
     setMountEditor(true)
     setExpanded(true)
-  }, [onEditorOpen])
+  }, [isCanvas, onEditorOpen])
 
   // ESC to collapse or exit date search; clear edit state when closing so next open is create mode
   useEffect(() => {
@@ -367,7 +472,7 @@ export function CommandBar({
         e.preventDefault()
         confirmGoToDate()
       }
-      // Shift+T — same as "Add new" (schedule view only; this bar is not mounted on canvas)
+      // Shift+T — same as "Add new" (schedule surface only)
       if (
         e.shiftKey &&
         (e.key === "t" || e.key === "T") &&
@@ -384,7 +489,7 @@ export function CommandBar({
         ) {
           return
         }
-        if (expanded || dateSearchMode || bulkSelection || bulkPicker != null) return
+        if (expanded || dateSearchMode || bulkSelection || bulkPicker != null || isCanvas) return
         e.preventDefault()
         openNewTaskEditor()
       }
@@ -401,6 +506,7 @@ export function CommandBar({
     bulkPicker,
     onEditDone,
     openNewTaskEditor,
+    isCanvas,
   ])
 
   // Measure expanded content height after it renders
@@ -419,8 +525,12 @@ export function CommandBar({
   const measureCollapsedStripWidths = useCallback(() => {
     const iw = idleStripMeasureRef.current?.getBoundingClientRect().width ?? 0
     const bw = bulkStripMeasureRef.current?.getBoundingClientRect().width ?? 0
+    const cw = canvasStripMeasureRef.current?.getBoundingClientRect().width ?? 0
+    const dw = dateStripMeasureRef.current?.getBoundingClientRect().width ?? 0
     if (iw > 0) setIdleStripW(Math.ceil(iw))
     if (bw > 0) setBulkStripW(Math.ceil(bw))
+    if (cw > 0) setCanvasStripW(Math.ceil(cw))
+    if (dw > 0) setDateStripW(Math.ceil(dw))
   }, [])
 
   const shellTransition = shouldReduceMotion
@@ -435,30 +545,82 @@ export function CommandBar({
     : `opacity ${expanded ? SHELL_OPEN_MS : SHELL_CLOSE_MS}ms ${SHELL_BEZIER_CSS}`
 
   const bulkActive = Boolean(bulkSelection)
-  /** Idle + bulk strips crossfade: open timing when editor or bulk is “disclosing”; close when returning to idle-only. */
-  const collapsedFaceOpacityTransition = shouldReduceMotion
-    ? "none"
-    : expanded || bulkActive
-      ? `opacity ${SHELL_OPEN_MS}ms ${SHELL_BEZIER_CSS}`
-      : `opacity ${SHELL_CLOSE_MS}ms ${SHELL_BEZIER_CSS}`
+  /** Longhand only — React warns if `transition` shorthand is mixed with `transitionDelay`. */
+  const collapsedFaceOpacityDurationMs = expanded || bulkActive ? SHELL_OPEN_MS : SHELL_CLOSE_MS
 
-  const idleFaceVisible = !expanded && !bulkActive
-  const bulkFaceVisible = !expanded && bulkActive
+  const idleFaceVisible = !isCanvas && !expanded && !bulkActive
+  const bulkFaceVisible = !isCanvas && !expanded && bulkActive
+
+  const idleFaceOpacityStyle = useMemo((): CSSProperties => {
+    if (shouldReduceMotion) return { transition: "none" }
+    const delayMs =
+      idleFaceVisible && scheduleRevealDelayMs > 0 ? scheduleRevealDelayMs : 0
+    return {
+      transitionProperty: "opacity",
+      transitionDuration: `${collapsedFaceOpacityDurationMs}ms`,
+      transitionTimingFunction: SHELL_BEZIER_CSS,
+      transitionDelay: `${delayMs}ms`,
+    }
+  }, [
+    shouldReduceMotion,
+    collapsedFaceOpacityDurationMs,
+    idleFaceVisible,
+    scheduleRevealDelayMs,
+  ])
+
+  const bulkFaceOpacityStyle = useMemo((): CSSProperties => {
+    if (shouldReduceMotion) return { transition: "none" }
+    const delayMs =
+      bulkFaceVisible && scheduleRevealDelayMs > 0 ? scheduleRevealDelayMs : 0
+    return {
+      transitionProperty: "opacity",
+      transitionDuration: `${collapsedFaceOpacityDurationMs}ms`,
+      transitionTimingFunction: SHELL_BEZIER_CSS,
+      transitionDelay: `${delayMs}ms`,
+    }
+  }, [
+    shouldReduceMotion,
+    collapsedFaceOpacityDurationMs,
+    bulkFaceVisible,
+    scheduleRevealDelayMs,
+  ])
   const bulkFaceModel = bulkSelection ?? BULK_FACE_LAYOUT_STUB
+
+  /** Crossfade schedule strip vs date-search face (pairs with collapsed shell timing). */
+  const scheduleDateFaceOpacityStyle = useMemo((): CSSProperties => {
+    if (shouldReduceMotion) return { transition: "none" }
+    return {
+      transitionProperty: "opacity",
+      transitionDuration: `${SHELL_CLOSE_MS}ms`,
+      transitionTimingFunction: SHELL_BEZIER_CSS,
+    }
+  }, [shouldReduceMotion])
 
   useLayoutEffect(() => {
     measureCollapsedStripWidths()
-  }, [measureCollapsedStripWidths, bulkSelection, bulkFaceModel.count])
+  }, [
+    measureCollapsedStripWidths,
+    bulkSelection,
+    bulkFaceModel.count,
+    isCanvas,
+    dateSearchMode,
+    dateQuery,
+    deferDateQueryClear,
+  ])
 
   useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(() => measureCollapsedStripWidths())
     const idleEl = idleStripMeasureRef.current
     const bulkEl = bulkStripMeasureRef.current
-    if (!idleEl || !bulkEl || typeof ResizeObserver === "undefined") return
-    const ro = new ResizeObserver(() => measureCollapsedStripWidths())
-    ro.observe(idleEl)
-    ro.observe(bulkEl)
+    const canvasEl = canvasStripMeasureRef.current
+    const dateEl = dateStripMeasureRef.current
+    if (idleEl) ro.observe(idleEl)
+    if (bulkEl) ro.observe(bulkEl)
+    if (canvasEl) ro.observe(canvasEl)
+    if (dateEl) ro.observe(dateEl)
     return () => ro.disconnect()
-  }, [measureCollapsedStripWidths])
+  }, [measureCollapsedStripWidths, appMode])
 
   const collapsedStripTargetWidth =
     idleStripW > 0 && bulkStripW > 0
@@ -471,13 +633,24 @@ export function CommandBar({
   const idleCommandBarWidth =
     idleStripW > 0 ? idleStripW : Math.max(collapsedStripTargetWidth, 48)
 
-  /** Single shell width: idle strip when expanded; collapsed strip when idle/bulk; auto for date-search row. */
-  const shellTargetWidth: number | "auto" =
-    dateSearchMode && !expanded
-      ? "auto"
+  /** Single shell width: canvas strip, idle, expanded editor, or date-search row. */
+  const shellTargetWidth: number | "auto" = isCanvas
+    ? canvasStripW > 0
+      ? canvasStripW
+      : Math.max(collapsedStripTargetWidth, 48)
+    : dateSearchMode && !expanded
+      ? dateStripW > 0
+        ? dateStripW
+        : Math.max(collapsedStripTargetWidth, 48)
       : expanded
         ? idleCommandBarWidth
         : collapsedStripTargetWidth
+
+  const dateSuggestionRowVisible =
+    Boolean(dateQuery.trim()) && (dateSearchMode || deferDateQueryClear)
+  const collapsedScheduleInnerMinHeight = dateSuggestionRowVisible
+    ? COLLAPSED_HEIGHT + 56
+    : COLLAPSED_HEIGHT
 
   const collapsedStripMotionTransition = shouldReduceMotion || expanded
     ? { duration: 0 }
@@ -490,19 +663,30 @@ export function CommandBar({
     if (!expanded) setMountEditor(false)
   }, [expanded])
 
-  return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex items-end justify-center px-4">
-      {/* Single motion container that animates height */}
+  const handleCanvasFileChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      if (!file || !onAddCanvasImageFile) return
+      onAddCanvasImageFile(file)
+      e.target.value = ""
+    },
+    [onAddCanvasImageFile]
+  )
+
+  const shell = (
+    <>
       <motion.div
         className="pointer-events-auto relative max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border/50 bg-secondary shadow-sm"
-        style={{ originY: 1 }}
+        style={{ transformOrigin: "0% 100%" }}
         initial={false}
         animate={{
-          height: expanded
-            ? expandedHeight
-            : dateSearchMode && dateQuery.trim()
-              ? COLLAPSED_HEIGHT + 56 // Add space for suggestion row
-              : COLLAPSED_HEIGHT,
+          height: isCanvas
+            ? COLLAPSED_HEIGHT
+            : expanded
+              ? expandedHeight
+              : dateSuggestionRowVisible
+                ? COLLAPSED_HEIGHT + 56 // Add space for suggestion row
+                : COLLAPSED_HEIGHT,
           width: shellTargetWidth,
         }}
         transition={shellTransition}
@@ -531,11 +715,20 @@ export function CommandBar({
           )}
         </div>
 
-        {/* Collapsed idle + bulk: absolute stacked faces (no layout coupling) + measured width morph. */}
-        {!dateSearchMode && (
+        {/* Collapsed idle + bulk + date search: dual-layer opacity crossfade; strips stay mounted for measurement. */}
+        {!expanded && !isCanvas && (
+          <div
+            className="relative shrink-0"
+            style={{ minHeight: collapsedScheduleInnerMinHeight }}
+          >
           <motion.div
             className="relative shrink-0 overflow-hidden"
-            style={{ height: COLLAPSED_HEIGHT }}
+            style={{
+              height: COLLAPSED_HEIGHT,
+              opacity: dateSearchMode ? 0 : 1,
+              pointerEvents: dateSearchMode ? "none" : "auto",
+              ...scheduleDateFaceOpacityStyle,
+            }}
             initial={false}
             animate={{ width: collapsedStripTargetWidth }}
             transition={collapsedStripMotionTransition}
@@ -549,8 +742,9 @@ export function CommandBar({
               style={{
                 height: COLLAPSED_HEIGHT,
                 opacity: idleFaceVisible ? 1 : 0,
-                transition: collapsedFaceOpacityTransition,
+                ...idleFaceOpacityStyle,
               }}
+              aria-hidden={!idleFaceVisible}
             >
               <ShortcutHintWrap
                 label="Add new task"
@@ -601,7 +795,7 @@ export function CommandBar({
               <div className="mx-1 h-4 w-px bg-border" />
 
               <button
-                onClick={() => setDateSearchMode(true)}
+                onClick={enterDateSearchMode}
                 className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium text-text-muted transition-colors hover:text-text"
               >
                 <ArrowRight className="h-3.5 w-3.5" />
@@ -618,7 +812,7 @@ export function CommandBar({
               style={{
                 height: COLLAPSED_HEIGHT,
                 opacity: bulkFaceVisible ? 1 : 0,
-                transition: collapsedFaceOpacityTransition,
+                ...bulkFaceOpacityStyle,
               }}
               aria-hidden={!bulkSelection}
             >
@@ -679,7 +873,125 @@ export function CommandBar({
               </button>
             </div>
           </motion.div>
+
+          <div
+            ref={dateStripMeasureRef}
+            className="absolute left-0 top-0 flex w-max max-w-[calc(100vw-2rem)] flex-col"
+            style={{
+              minHeight: COLLAPSED_HEIGHT,
+              opacity: dateSearchMode ? 1 : 0,
+              pointerEvents: dateSearchMode ? "auto" : "none",
+              ...scheduleDateFaceOpacityStyle,
+            }}
+            aria-hidden={!dateSearchMode}
+          >
+            {/* Input row */}
+            <div className="flex items-center gap-3 px-4" style={{ height: COLLAPSED_HEIGHT }}>
+              <button
+                type="button"
+                onClick={() => exitDateSearchMode()}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:text-text"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+              <input
+                ref={dateInputRef}
+                type="text"
+                value={dateQuery}
+                onChange={(e) => setDateQuery(e.target.value)}
+                placeholder="e.g. nov 5, in 10 weeks"
+                className="flex-1 bg-transparent text-sm font-medium text-text placeholder:text-text-faint focus:outline-none"
+              />
+            </div>
+
+            {/* Suggestion row */}
+            {dateQuery.trim() && (
+              <div className="border-t border-border/30 px-4 py-2 pb-4">
+                {parsedDate ? (
+                  <button
+                    type="button"
+                    onClick={confirmGoToDate}
+                    className="group w-full rounded-lg border border-transparent px-3 py-2 text-left text-sm font-medium text-text-muted transition-all duration-200 ease-out hover:bg-background/50 hover:text-text active:scale-[0.995]"
+                  >
+                    <span className="transition-colors duration-150 group-hover:text-text">
+                      Go to {format(parsedDate, "MMMM d, yyyy")}
+                    </span>
+                  </button>
+                ) : (
+                  <p className="px-3 py-2 text-sm text-text-faint">No matching date found</p>
+                )}
+              </div>
+            )}
+          </div>
+          </div>
         )}
+
+        {/* Canvas commands — measure outer box; motion ties row to shell morph (no dead right edge). */}
+        <div
+          ref={canvasStripMeasureRef}
+          className={cn(
+            "absolute left-0 top-0 w-max",
+            isCanvas ? "pointer-events-auto" : "pointer-events-none"
+          )}
+          style={{ height: COLLAPSED_HEIGHT }}
+        >
+          <motion.div
+            className="flex h-full w-max items-center justify-center gap-1 px-4"
+            initial={false}
+            animate={
+              shouldReduceMotion
+                ? { opacity: isCanvas ? 1 : 0, x: 0 }
+                : {
+                    opacity: isCanvas ? 1 : 0,
+                    x: isCanvas ? 0 : 12,
+                  }
+            }
+            transition={
+              shouldReduceMotion
+                ? { duration: 0 }
+                : {
+                    duration: isCanvas ? SHELL_OPEN_S : SHELL_CLOSE_S,
+                    ease: CADENCE_EASE_OUT,
+                  }
+            }
+            aria-hidden={!isCanvas}
+          >
+            <button
+              type="button"
+              onClick={onAddCanvasNote}
+              className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium text-text-muted transition-colors hover:text-text"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Add note</span>
+            </button>
+            <motion.div
+              className="flex items-center gap-1"
+              initial={false}
+              animate={{
+                x: shouldReduceMotion ? 0 : isCanvas ? 0 : 8,
+              }}
+              transition={
+                shouldReduceMotion
+                  ? { duration: 0 }
+                  : {
+                      duration: isCanvas ? SHELL_OPEN_S : SHELL_CLOSE_S,
+                      ease: CADENCE_EASE_OUT,
+                      delay: isCanvas ? 0.05 : 0,
+                    }
+              }
+            >
+              <div className="mx-1 h-4 w-px bg-border" />
+              <button
+                type="button"
+                onClick={() => canvasFileInputRef.current?.click()}
+                className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium text-text-muted transition-colors hover:text-text"
+              >
+                <ImageIcon className="h-3.5 w-3.5" />
+                <span>Upload image</span>
+              </button>
+            </motion.div>
+          </motion.div>
+        </div>
 
         {bulkPicker?.kind === "project" && bulkSelection && (
           <BulkChooserPopover
@@ -730,50 +1042,22 @@ export function CommandBar({
           </BulkChooserPopover>
         )}
 
-        {/* Collapsed content - Date search mode */}
-        {dateSearchMode && !expanded && (
-          <div
-            className="flex flex-col"
-            style={{ minHeight: COLLAPSED_HEIGHT }}
-          >
-            {/* Input row */}
-            <div className="flex items-center gap-3 px-4" style={{ height: COLLAPSED_HEIGHT }}>
-              <button
-                onClick={exitDateSearchMode}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:text-text"
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </button>
-              <input
-                ref={dateInputRef}
-                type="text"
-                value={dateQuery}
-                onChange={(e) => setDateQuery(e.target.value)}
-                placeholder="e.g. nov 5, in 10 weeks"
-                className="flex-1 bg-transparent text-sm font-medium text-text placeholder:text-text-faint focus:outline-none"
-              />
-            </div>
-
-            {/* Suggestion row */}
-            {dateQuery.trim() && (
-              <div className="border-t border-border/30 px-4 py-2 pb-4">
-                {parsedDate ? (
-                  <button
-                    onClick={confirmGoToDate}
-                    className="group w-full rounded-lg border border-transparent px-3 py-2 text-left text-sm font-medium text-text-muted transition-all duration-200 ease-out hover:bg-background/50 hover:text-text active:scale-[0.995]"
-                  >
-                    <span className="transition-colors duration-150 group-hover:text-text">
-                      Go to {format(parsedDate, "MMMM d, yyyy")}
-                    </span>
-                  </button>
-                ) : (
-                  <p className="px-3 py-2 text-sm text-text-faint">No matching date found</p>
-                )}
-              </div>
-            )}
-          </div>
-        )}
       </motion.div>
+      <input
+        ref={canvasFileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleCanvasFileChange}
+      />
+    </>
+  )
+
+  if (dock === "inline") return shell
+
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex items-end justify-center px-4">
+      {shell}
     </div>
   )
 }

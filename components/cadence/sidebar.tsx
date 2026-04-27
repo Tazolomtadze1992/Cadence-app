@@ -4,16 +4,18 @@ import {
   useState,
   useRef,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useMemo,
   type ComponentType,
   type ReactNode,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
+  type RefObject,
 } from "react"
 import { createPortal } from "react-dom"
 import { format, startOfDay, addDays } from "date-fns"
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
+import { motion, AnimatePresence, useReducedMotion, type Variants } from "framer-motion"
 import { cn } from "@/lib/utils"
 import {
   ChevronLeft,
@@ -44,17 +46,19 @@ import { ProjectActionsDropdown } from "./canvas-sidebar"
 import { ProjectItem } from "./project-item"
 import { AddProjectPopover } from "./add-project-popover"
 import { bucketForSchedulePickedDate } from "./picked-due-bucket"
-import { CADENCE_EASE_SLIDE, SIDEBAR_DISCLOSURE_DURATION_S } from "@/lib/cadence-motion"
-
-/** Disclosure body only: tied to height via the same `transition` (no separate exit timing). */
-const SIDEBAR_DISCLOSURE_CONTENT_SOFT = {
-  opacity: 0.96,
-  filter: "blur(1.5px)",
-} as const
-const SIDEBAR_DISCLOSURE_CONTENT_CRISP = {
-  opacity: 1,
-  filter: "blur(0px)",
-} as const
+import {
+  CADENCE_EASE_OUT,
+  CADENCE_EASE_SLIDE_CSS,
+  SIDEBAR_PANEL_SLIDE_VARIANTS,
+  sidebarPanelSlideTransition,
+} from "@/lib/cadence-motion"
+import {
+  getFloatingMenuSurfaceStyle,
+  useFloatingMenuEnterVisible,
+  useFloatingMenuRequestClose,
+  runAfterFloatingMenuExit,
+} from "@/components/cadence/floating-menu-portal"
+import { SidebarDisclosure } from "@/components/cadence/sidebar-disclosure"
 
 const scheduledGroups = [
   { label: "Due today", color: "#f97316", icon: "due-today.svg" },
@@ -93,7 +97,6 @@ const EXTENDED_COLORS = [
 
 export function AppSidebar({
   collapsed,
-  onToggleSidebar,
   tasks = [],
   projects = [],
   onToggleComplete,
@@ -102,7 +105,6 @@ export function AppSidebar({
   onQuickAddTask,
   onDragTaskStart,
   onDragTaskEnd,
-  appMode,
   sidebarView,
   onSidebarModeClick,
   onAddProject,
@@ -113,7 +115,6 @@ export function AppSidebar({
   onSidebarTasksTabChange,
 }: {
   collapsed: boolean
-  onToggleSidebar: () => void
   tasks?: Task[]
   projects?: CanvasProject[]
   onToggleComplete?: (id: string) => void
@@ -127,7 +128,6 @@ export function AppSidebar({
   }) => void
   onDragTaskStart?: (task: Task) => void
   onDragTaskEnd?: () => void
-  appMode: import("./top-bar").AppMode
   sidebarView: "tasks" | "agenda"
   onSidebarModeClick: (view: "tasks" | "agenda" | "canvas") => void
   onAddProject?: (name: string, color: string) => void
@@ -363,79 +363,22 @@ export function AppSidebar({
     onSidebarModeClick("tasks")
   }, [sidebarView, onSidebarModeClick])
 
-  // Keyboard shortcuts for T, A, and Shift+S
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if typing in an input/textarea/contenteditable
-      const target = e.target as HTMLElement
-      if (
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable
-      ) return
-
-      // Shift+S toggles sidebar
-      if (e.shiftKey && e.key.toLowerCase() === "s" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault()
-        onToggleSidebar()
-        return
-      }
-
-      // Ignore other shortcuts if modifier keys are pressed
-      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
-
-      if (e.key === "t" || e.key === "T") {
-        e.preventDefault()
-        switchToTasks()
-      } else if (e.key === "a" || e.key === "A") {
-        e.preventDefault()
-        switchToAgenda()
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [switchToTasks, switchToAgenda, onToggleSidebar])
-
-  // Animation variants for sliding panels
-  const slideVariants = {
-    enter: (direction: number) => ({
-      x: direction > 0 ? "100%" : "-100%",
-      opacity: 0,
-    }),
-    center: {
-      x: 0,
-      opacity: 1,
-    },
-    exit: (direction: number) => ({
-      x: direction > 0 ? "-100%" : "100%",
-      opacity: 0,
-    }),
-  }
-
   const shouldReduceMotion = useReducedMotion()
   const slideTransition = useMemo(
-    () =>
-      shouldReduceMotion
-        ? { duration: 0 }
-        : { duration: SIDEBAR_DISCLOSURE_DURATION_S, ease: CADENCE_EASE_SLIDE },
+    () => sidebarPanelSlideTransition(shouldReduceMotion),
     [shouldReduceMotion]
   )
   return (
-    <aside
-      className={cn(
-        "flex h-full shrink-0 flex-col bg-background overflow-hidden transition-[width,opacity] duration-200 ease-out",
-        collapsed ? "w-0 opacity-0" : "w-[260px] opacity-100"
-      )}
-    >
+    <div className="relative h-full min-h-0 w-full overflow-hidden">
       {/* Animated content area */}
-      <div className="relative flex-1 overflow-hidden">
+      <div className="relative h-full min-h-0 overflow-hidden">
         {contentVisible && (
         <AnimatePresence initial={false} custom={slideDirection} mode="popLayout">
           {sidebarView === "tasks" ? (
             <motion.div
               key="tasks"
               custom={slideDirection}
-              variants={slideVariants}
+              variants={SIDEBAR_PANEL_SLIDE_VARIANTS}
               initial="enter"
               animate="center"
               exit="exit"
@@ -482,7 +425,7 @@ export function AppSidebar({
                     <motion.div
                       key="sidebar-tab-all"
                       custom={tabSlideDirection}
-                      variants={slideVariants}
+                      variants={SIDEBAR_PANEL_SLIDE_VARIANTS}
                       initial="enter"
                       animate="center"
                       exit="exit"
@@ -660,12 +603,10 @@ export function AppSidebar({
                       onUpdateProject?.(project.id, { color })
                     }}
                     onRename={() => {
-                      setProjectActionsDropdown(null)
                       requestAnimationFrame(() => setRenamingProjectId(project.id))
                     }}
                     onDelete={() => {
                       onDeleteProject?.(project.id)
-                      setProjectActionsDropdown(null)
                     }}
                   />
                 )
@@ -675,7 +616,7 @@ export function AppSidebar({
                     <motion.div
                       key="sidebar-tab-completed"
                       custom={tabSlideDirection}
-                      variants={slideVariants}
+                      variants={SIDEBAR_PANEL_SLIDE_VARIANTS}
                       initial="enter"
                       animate="center"
                       exit="exit"
@@ -734,51 +675,20 @@ export function AppSidebar({
             <motion.div
               key="agenda"
               custom={slideDirection}
-              variants={slideVariants}
+              variants={SIDEBAR_PANEL_SLIDE_VARIANTS}
               initial="enter"
               animate="center"
               exit="exit"
               transition={slideTransition}
               className="absolute inset-0 overflow-hidden"
             >
-              <AgendaView tasks={tasks} projects={projects} />
+              <AgendaView tasks={tasks} projects={projects} onQuickAddTask={onQuickAddTask} />
             </motion.div>
           )}
         </AnimatePresence>
         )}
       </div>
-
-
-      {/* Bottom toggle icons */}
-      <div className="flex justify-start px-3 pb-3 pt-2">
-        <div className="relative inline-flex items-center rounded-lg bg-surface-2/80 px-2 py-2">
-          <IconTooltipButton
-            iconUrl="/icons/taskicon.svg"
-            label="Tasks"
-            shortcut="T"
-            isActive={sidebarView === "tasks"}
-            onClick={switchToTasks}
-            tooltipPosition="above"
-          />
-          <IconTooltipButton
-            iconUrl="/icons/calendar.svg"
-            label="Agenda"
-            shortcut="A"
-            isActive={sidebarView === "agenda"}
-            onClick={switchToAgenda}
-            tooltipPosition="above"
-          />
-          <IconTooltipButton
-            iconUrl="/icons/canvas.svg"
-            label="Canvas"
-            shortcut="C"
-            isActive={appMode === "canvas"}
-            onClick={() => onSidebarModeClick("canvas")}
-            tooltipPosition="above"
-          />
-        </div>
-      </div>
-    </aside>
+    </div>
   )
 }
 
@@ -796,33 +706,35 @@ function AddCategoryPopover({
   const [name, setName] = useState("")
   const [color, setColor] = useState(EXTENDED_COLORS[0])
   const [error, setError] = useState<string | null>(null)
-  const [visible, setVisible] = useState(false)
+  const reduceMotion = useReducedMotion() ?? false
+  const [visible, setVisible] = useFloatingMenuEnterVisible(reduceMotion)
   const popoverRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const requestClose = useFloatingMenuRequestClose(onClose, setVisible, reduceMotion)
 
   useEffect(() => {
-    requestAnimationFrame(() => setVisible(true))
-    inputRef.current?.focus()
+    const id = window.setTimeout(() => inputRef.current?.focus(), 0)
+    return () => window.clearTimeout(id)
   }, [])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) onClose()
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) requestClose()
     }
     const timer = setTimeout(() => document.addEventListener("mousedown", handleClick), 0)
     return () => {
       clearTimeout(timer)
       document.removeEventListener("mousedown", handleClick)
     }
-  }, [onClose])
+  }, [requestClose])
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose()
+      if (e.key === "Escape") requestClose()
     }
     document.addEventListener("keydown", handleKey)
     return () => document.removeEventListener("keydown", handleKey)
-  }, [onClose])
+  }, [requestClose])
 
   const handleSubmit = () => {
     const trimmed = name.trim()
@@ -838,10 +750,11 @@ function AddCategoryPopover({
       style={{
         top: pos.top,
         left: pos.left,
-        opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0) scale(1)" : "translateY(-4px) scale(0.98)",
-        transition: "opacity 160ms cubic-bezier(0.2,0.8,0.2,1), transform 160ms cubic-bezier(0.2,0.8,0.2,1)",
-        transformOrigin: "top left",
+        ...getFloatingMenuSurfaceStyle({
+          visible,
+          transformOrigin: "top left",
+          reduceMotion,
+        }),
       }}
     >
       <div className="mb-3">
@@ -869,7 +782,7 @@ function AddCategoryPopover({
 
       <div className="flex items-center justify-end gap-2">
         <button
-          onClick={onClose}
+          onClick={requestClose}
           className="rounded px-3 py-1.5 text-xs font-medium text-text-muted transition-colors duration-300 ease-in-out hover:bg-surface-2 hover:text-text"
         >
           Cancel
@@ -903,8 +816,10 @@ export function CategoryActionsDropdown({
 }) {
   const DROPDOWN_WIDTH = 200
   const GAP = 8
-  const [visible, setVisible] = useState(false)
+  const reduceMotion = useReducedMotion() ?? false
+  const [visible, setVisible] = useFloatingMenuEnterVisible(reduceMotion)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const requestClose = useFloatingMenuRequestClose(onClose, setVisible, reduceMotion)
 
   const fitsRight = anchor.right + GAP + DROPDOWN_WIDTH <= window.innerWidth - GAP
   const computedLeft = fitsRight ? anchor.right + GAP : anchor.left - DROPDOWN_WIDTH - GAP
@@ -912,27 +827,23 @@ export function CategoryActionsDropdown({
   const origin = fitsRight ? "top left" : "top right"
 
   useEffect(() => {
-    requestAnimationFrame(() => setVisible(true))
-  }, [])
-
-  useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) onClose()
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) requestClose()
     }
     const timer = setTimeout(() => document.addEventListener("mousedown", handleClick), 0)
     return () => {
       clearTimeout(timer)
       document.removeEventListener("mousedown", handleClick)
     }
-  }, [onClose])
+  }, [requestClose])
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose()
+      if (e.key === "Escape") requestClose()
     }
     document.addEventListener("keydown", handleKey)
     return () => document.removeEventListener("keydown", handleKey)
-  }, [onClose])
+  }, [requestClose])
 
   return createPortal(
     <div
@@ -941,10 +852,7 @@ export function CategoryActionsDropdown({
       style={{
         top: computedTop,
         left: computedLeft,
-        opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0) scale(1)" : "translateY(-4px) scale(0.98)",
-        transition: "opacity 160ms cubic-bezier(0.2,0.8,0.2,1), transform 160ms cubic-bezier(0.2,0.8,0.2,1)",
-        transformOrigin: origin,
+        ...getFloatingMenuSurfaceStyle({ visible, transformOrigin: origin, reduceMotion }),
       }}
     >
       <div className="mb-3">
@@ -954,7 +862,12 @@ export function CategoryActionsDropdown({
       <div className="my-1.5 h-px bg-border/20" />
 
       <button
-        onClick={() => onRename()}
+        onClick={() =>
+          runAfterFloatingMenuExit(reduceMotion, setVisible, () => {
+            onRename()
+            onClose()
+          })
+        }
         className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1 text-xs text-text transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:bg-surface-2"
       >
         <Pencil className="h-3 w-3 text-text-muted" />
@@ -962,7 +875,12 @@ export function CategoryActionsDropdown({
       </button>
 
       <button
-        onClick={() => onDelete()}
+        onClick={() =>
+          runAfterFloatingMenuExit(reduceMotion, setVisible, () => {
+            onDelete()
+            onClose()
+          })
+        }
         className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1 text-xs text-red-400 transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:bg-red-500/10"
       >
         <Trash2 className="h-3 w-3" />
@@ -1035,51 +953,211 @@ const PRIORITY_OPTIONS = [
   { value: "none", label: "None" },
 ]
 
-// ─── Submenu Component ───────────────────────────────────────────────
-function DropdownSubmenu({
+/** Task-actions side submenu: NavigationMenu-style clipped viewport + paired enter/exit (translateX only on inner). */
+const TASK_ACTIONS_SUBMENU_GAP = 6
+const TASK_ACTIONS_SUBMENU_CONTENT_MS = 150
+const TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS = 170
+const TASK_ACTIONS_SUBMENU_CONTENT_OFFSET_PX = 10
+
+const TASK_SUBMENU_CONTENT_EASE = [...CADENCE_EASE_OUT] as [number, number, number, number]
+
+function taskSubmenuAnimationOrder(key: string): number {
+  switch (key) {
+    case "priority":
+      return 0
+    case "project":
+      return 1
+    case "schedule-options":
+      return 2
+    case "schedule-calendar":
+      return 3
+    default:
+      return 0
+  }
+}
+
+function taskSubmenuInnerVariants(reduceMotion: boolean, offset: number): Variants {
+  if (reduceMotion) {
+    return {
+      initial: { opacity: 1, x: 0, zIndex: 2 },
+      animate: { opacity: 1, x: 0, zIndex: 2, transition: { duration: 0 } },
+      exit: { opacity: 1, x: 0, zIndex: 1, transition: { duration: 0 } },
+    }
+  }
+  const t = {
+    duration: TASK_ACTIONS_SUBMENU_CONTENT_MS / 1000,
+    ease: TASK_SUBMENU_CONTENT_EASE,
+  }
+  return {
+    initial: (dir: number) => ({
+      opacity: 0,
+      x: dir * offset,
+      zIndex: 2,
+      pointerEvents: "auto" as const,
+    }),
+    animate: {
+      opacity: 1,
+      x: 0,
+      zIndex: 2,
+      pointerEvents: "auto" as const,
+      transition: t,
+    },
+    exit: (dir: number) => ({
+      opacity: 0,
+      x: -dir * offset,
+      zIndex: 1,
+      pointerEvents: "none" as const,
+      transition: t,
+    }),
+  }
+}
+
+/**
+ * Single portaled shell while `openSub` is set. Shell: floating-menu enter once + layout morph (top/left/width/height).
+ * Inner: AnimatePresence pairs exit/enter on `animationKey` (translateX + opacity, no scale).
+ */
+function TaskActionsSubmenuShell({
   anchor,
-  children,
+  submenuWidth,
+  reduceMotion,
+  submenuRef,
   onMouseEnter,
   onMouseLeave,
-  submenuRef,
-  submenuWidth = 180,
+  animationKey,
+  children,
 }: {
   anchor: { top: number; right: number; left: number }
-  children: React.ReactNode
+  submenuWidth: number
+  reduceMotion: boolean
+  submenuRef?: RefObject<HTMLDivElement | null>
   onMouseEnter?: () => void
   onMouseLeave?: () => void
-  submenuRef?: React.RefObject<HTMLDivElement | null>
-  /** Width in px; wider when showing inline calendar. */
-  submenuWidth?: number
+  /** Stable id for direction: priority | project | schedule-options | schedule-calendar */
+  animationKey: string
+  children: React.ReactNode
 }) {
-  const SUBMENU_WIDTH = submenuWidth
-  const GAP = 6
-  const fitsRight = anchor.right + GAP + SUBMENU_WIDTH <= window.innerWidth - 8
-  const left = fitsRight ? anchor.right + GAP : anchor.left - SUBMENU_WIDTH - GAP
+  const fitsRight =
+    anchor.right + TASK_ACTIONS_SUBMENU_GAP + submenuWidth <= window.innerWidth - 8
+  const left = fitsRight
+    ? anchor.right + TASK_ACTIONS_SUBMENU_GAP
+    : anchor.left - submenuWidth - TASK_ACTIONS_SUBMENU_GAP
   const top = Math.min(anchor.top, window.innerHeight - 200)
 
-  const [visible, setVisible] = useState(false)
-  useEffect(() => {
-    requestAnimationFrame(() => setVisible(true))
+  const [shellVisible] = useFloatingMenuEnterVisible(reduceMotion)
+  const prevKeyRef = useRef<string | null>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const activePanelRef = useRef<HTMLDivElement>(null)
+  const lastViewportHeightRef = useRef<number | null>(null)
+  const [viewportHeight, setViewportHeight] = useState<number | null>(null)
+
+  const shellSurface = getFloatingMenuSurfaceStyle({
+    visible: shellVisible,
+    transformOrigin: fitsRight ? "top left" : "top right",
+    reduceMotion,
+  })
+
+  const layoutTransition = reduceMotion
+    ? ""
+    : `top ${TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS}ms ${CADENCE_EASE_SLIDE_CSS}, left ${TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS}ms ${CADENCE_EASE_SLIDE_CSS}, width ${TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS}ms ${CADENCE_EASE_SLIDE_CSS}`
+
+  const shellTransition = reduceMotion
+    ? shellSurface.transition
+    : layoutTransition
+      ? `${shellSurface.transition}, ${layoutTransition}`
+      : shellSurface.transition
+
+  const prev = prevKeyRef.current
+  let transitionDir = 1
+  if (prev !== null && prev !== animationKey) {
+    const d = taskSubmenuAnimationOrder(animationKey) - taskSubmenuAnimationOrder(prev)
+    transitionDir = d >= 0 ? 1 : -1
+  }
+
+  useLayoutEffect(() => {
+    prevKeyRef.current = animationKey
+  }, [animationKey])
+
+  const measureViewport = useCallback(() => {
+    const activePanel = activePanelRef.current
+    if (!activePanel) return
+    const nextHeight = activePanel.getBoundingClientRect().height
+    if (nextHeight > 0) {
+      lastViewportHeightRef.current = nextHeight
+      setViewportHeight(nextHeight)
+    }
   }, [])
+
+  useLayoutEffect(() => {
+    measureViewport()
+    let raf2 = 0
+    const raf1 = requestAnimationFrame(() => {
+      measureViewport()
+      raf2 = requestAnimationFrame(() => measureViewport())
+    })
+    return () => {
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
+    }
+  }, [animationKey, submenuWidth, measureViewport])
+
+  useEffect(() => {
+    const activePanel = activePanelRef.current
+    if (!activePanel) return
+    const ro = new ResizeObserver(() => measureViewport())
+    ro.observe(activePanel)
+    return () => ro.disconnect()
+  }, [measureViewport, animationKey])
+
+  const innerVariants = useMemo(
+    () => taskSubmenuInnerVariants(reduceMotion, TASK_ACTIONS_SUBMENU_CONTENT_OFFSET_PX),
+    [reduceMotion]
+  )
+
+  const resolvedViewportHeight =
+    viewportHeight ?? lastViewportHeightRef.current ?? 120
 
   return createPortal(
     <div
       ref={submenuRef}
-      className="fixed z-[102] rounded-xl border border-border/50 bg-background py-1.5 shadow-lg will-change-transform will-change-opacity"
+      className="fixed z-[102] rounded-xl border border-border/50 bg-background py-1.5 shadow-lg will-change-transform will-change-opacity overflow-hidden"
       style={{
         top,
         left,
-        width: SUBMENU_WIDTH,
-        opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0) scale(1)" : "translateY(-2px) scale(0.99)",
-        transition: "opacity 140ms cubic-bezier(0.2,0.8,0.2,1), transform 140ms cubic-bezier(0.2,0.8,0.2,1)",
-        transformOrigin: fitsRight ? "top left" : "top right",
+        width: submenuWidth,
+        opacity: shellSurface.opacity,
+        transform: shellSurface.transform,
+        transition: shellTransition,
+        transformOrigin: shellSurface.transformOrigin,
       }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      {children}
+      <div
+        ref={viewportRef}
+        className="relative w-full overflow-hidden"
+        style={{
+          height: `${resolvedViewportHeight}px`,
+          transition: reduceMotion
+            ? undefined
+            : `height ${TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS}ms ${CADENCE_EASE_SLIDE_CSS}`,
+        }}
+      >
+        <AnimatePresence initial={false} custom={transitionDir} mode="sync">
+          <motion.div
+            key={animationKey}
+            ref={activePanelRef}
+            className="absolute left-0 top-0 w-full"
+            custom={transitionDir}
+            variants={innerVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            onAnimationComplete={measureViewport}
+          >
+            {children}
+          </motion.div>
+        </AnimatePresence>
+      </div>
     </div>,
     document.body
   )
@@ -1136,7 +1214,8 @@ function TaskActionsDropdown({
 }) {
   const DROPDOWN_WIDTH = 200
   const GAP = 8
-  const [visible, setVisible] = useState(false)
+  const reduceMotion = useReducedMotion() ?? false
+  const [visible, setVisible] = useFloatingMenuEnterVisible(reduceMotion)
   const popoverRef = useRef<HTMLDivElement>(null)
   const submenuRef = useRef<HTMLDivElement>(null)
   const [openSub, setOpenSub] = useState<"priority" | "project" | "schedule" | null>(null)
@@ -1149,15 +1228,7 @@ function TaskActionsDropdown({
   const computedTop = Math.min(anchor.top, window.innerHeight - DROPDOWN_HEIGHT - GAP)
   const origin = fitsRight ? "top left" : "top right"
 
-  useEffect(() => {
-    requestAnimationFrame(() => setVisible(true))
-  }, [])
-
-  // ✅ animate-out close (instead of unmounting instantly)
-  const closeWithAnimation = useCallback(() => {
-    setVisible(false)
-    window.setTimeout(() => onClose(), 160)
-  }, [onClose])
+  const closeWithAnimation = useFloatingMenuRequestClose(onClose, setVisible, reduceMotion)
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -1202,8 +1273,12 @@ function TaskActionsDropdown({
     }
     if (openTimer.current) clearTimeout(openTimer.current)
 
-    // ✅ tiny delay prevents flicker + feels intentional
-    openTimer.current = setTimeout(() => setOpenSub(sub), 60)
+    // Hover intent delay only when opening from no submenu; switches are immediate.
+    if (openSub === null) {
+      openTimer.current = setTimeout(() => setOpenSub(sub), 60)
+    } else {
+      setOpenSub(sub)
+    }
   }
 
   const handleContainerEnter = () => {
@@ -1239,6 +1314,18 @@ function TaskActionsDropdown({
   const rowClass =
     "flex w-full items-center gap-2.5 px-3 py-1.5 text-xs text-text transition-colors duration-150 hover:bg-surface-2"
 
+  const taskSubmenuAnimationKey =
+    openSub === null
+      ? ""
+      : openSub === "schedule"
+        ? scheduleMenuView === "calendar"
+          ? "schedule-calendar"
+          : "schedule-options"
+        : openSub
+
+  const taskSubmenuWidth =
+    openSub === "schedule" && scheduleMenuView === "calendar" ? 280 : 180
+
   return createPortal(
     <div
       ref={popoverRef}
@@ -1246,10 +1333,7 @@ function TaskActionsDropdown({
       style={{
         top: computedTop,
         left: computedLeft,
-        opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0) scale(1)" : "translateY(-4px) scale(0.98)",
-        transition: "opacity 500ms cubic-bezier(0.2,0.8,0.2,1), transform 500ms cubic-bezier(0.2,0.8,0.2,1)",
-        transformOrigin: origin,
+        ...getFloatingMenuSurfaceStyle({ visible, transformOrigin: origin, reduceMotion }),
       }}
       onMouseEnter={handleContainerEnter}
       onMouseLeave={handleContainerLeave}
@@ -1313,170 +1397,163 @@ function TaskActionsDropdown({
         <span>Delete</span>
       </button>
 
-      {openSub === "priority" && subAnchor && (
-        <DropdownSubmenu
+      {openSub && subAnchor && (
+        <TaskActionsSubmenuShell
           anchor={subAnchor}
+          submenuWidth={taskSubmenuWidth}
+          reduceMotion={reduceMotion}
+          submenuRef={submenuRef}
           onMouseEnter={handleContainerEnter}
           onMouseLeave={handleContainerLeave}
-          submenuRef={submenuRef}
+          animationKey={taskSubmenuAnimationKey}
         >
-          {PRIORITY_OPTIONS.map((opt) => (
-            <SubmenuRow
-              key={opt.value}
-              label={opt.label}
-              icon={<PriorityIcon priority={opt.value} className="h-3.5 w-3.5" />}
-              isSelected={task.priority === opt.value}
-              onClick={() => { onUpdateTask(task.id, { priority: opt.value }); onClose() }}
-            />
-          ))}
-        </DropdownSubmenu>
-      )}
-
-      {openSub === "project" && subAnchor && (
-        <DropdownSubmenu
-          anchor={subAnchor}
-          onMouseEnter={handleContainerEnter}
-          onMouseLeave={handleContainerLeave}
-          submenuRef={submenuRef}
-        >
-          {projects.map((project) => {
-            return (
-              <SubmenuRow
-                key={project.id}
-                label={project.name}
-                icon={
-                  <span
-                    className="h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: project.color ?? "#94a3b8" }}
-                  />
-                }
-                isSelected={(task.projectId ?? "general") === project.id}
-                onClick={() => {
-                  onUpdateTask(task.id, { projectId: project.id })
-                  closeWithAnimation()
-                }}
-              />
-            )
-          })}
-        </DropdownSubmenu>
-      )}
-
-      {openSub === "schedule" && subAnchor && (
-        <DropdownSubmenu
-          anchor={subAnchor}
-          onMouseEnter={handleContainerEnter}
-          onMouseLeave={handleContainerLeave}
-          submenuRef={submenuRef}
-          submenuWidth={scheduleMenuView === "calendar" ? 280 : 180}
-        >
-          {scheduleMenuView === "options" ? (
+          {openSub === "priority" ? (
             <>
-              {QUICK_WHEN_OPTIONS.map((opt) => (
-                <button
+              {PRIORITY_OPTIONS.map((opt) => (
+                <SubmenuRow
                   key={opt.value}
-                  type="button"
-                  className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-text transition-colors hover:bg-surface-2"
+                  label={opt.label}
+                  icon={<PriorityIcon priority={opt.value} className="h-3.5 w-3.5" />}
+                  isSelected={task.priority === opt.value}
                   onClick={() => {
-                    onUpdateTask(task.id, {
-                      schedule: opt.value,
-                      schedulePickedDate: undefined,
-                    })
+                    onUpdateTask(task.id, { priority: opt.value })
                     closeWithAnimation()
                   }}
-                >
-                  <img src={`/icons/${opt.icon}`} alt="" className="h-4 w-4 shrink-0" />
-                  <span className="flex-1 text-left">{opt.label}</span>
-                  {task.schedule === opt.value && (
-                    <Check className="h-3 w-3 shrink-0 text-text-muted" />
-                  )}
-                </button>
+                />
               ))}
-              <button
-                type="button"
-                className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-text transition-colors hover:bg-surface-2"
-                onClick={() => setScheduleMenuView("calendar")}
-              >
-                <img src={PICK_DATE_ICON} alt="" className="h-4 w-4 shrink-0" />
-                <span className="flex-1 text-left text-text">
-                  {whenPickRowLabel(task.schedule, task.schedulePickedDate)}
-                </span>
-                {task.schedule === "picked" && task.schedulePickedDate ? (
-                  <Check className="h-3 w-3 shrink-0 text-text-muted" />
-                ) : null}
-              </button>
             </>
-          ) : (
-            <div className="px-1 pb-1 pt-0.5">
-              <button
-                type="button"
-                className="mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
-                onClick={() => setScheduleMenuView("options")}
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-                Back
-              </button>
-              <div className="min-w-0" onClick={(e) => e.stopPropagation()}>
-                <Calendar
-                  navLayout="around"
-                  mode="single"
-                  captionLayout="label"
-                  formatters={whenInlineCalendarFormatters}
-                  selected={
-                    task.schedulePickedDate
-                      ? new Date(`${task.schedulePickedDate}T12:00:00`)
-                      : undefined
+          ) : openSub === "project" ? (
+            <>
+              {projects.map((project) => (
+                <SubmenuRow
+                  key={project.id}
+                  label={project.name}
+                  icon={
+                    <span
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{ backgroundColor: project.color ?? "#94a3b8" }}
+                    />
                   }
-                  onSelect={(date) => {
-                    if (date) {
-                      onUpdateTask(task.id, {
-                        schedule: "picked",
-                        schedulePickedDate: format(startOfDay(date), "yyyy-MM-dd"),
-                      })
-                      setScheduleMenuView("options")
-                      closeWithAnimation()
-                    }
-                  }}
-                  defaultMonth={
-                    task.schedulePickedDate
-                      ? new Date(`${task.schedulePickedDate}T12:00:00`)
-                      : new Date()
-                  }
-                  className="w-full max-w-[min(260px,calc(100vw-2rem))] !bg-transparent !p-0 [--cell-size:2rem]"
-                  modifiersClassNames={{
-                    today:
-                      "[&_button:not([data-selected-single=true])]:bg-app-accent [&_button:not([data-selected-single=true])]:text-white [&_button:not([data-selected-single=true])]:hover:bg-app-accent/90",
-                    selected:
-                      "[&_button]:z-[1] [&_button]:ring-2 [&_button]:ring-white/25 [&_button]:ring-offset-0",
-                  }}
-                  classNames={{
-                    months: "flex w-full flex-col gap-0",
-                    month: "relative w-full gap-1 p-0",
-                    month_caption:
-                      "relative mb-0 flex h-8 w-full shrink-0 items-center justify-start px-9",
-                    caption_label:
-                      "w-full text-left text-sm font-semibold tracking-tight text-text",
-                    button_previous:
-                      "absolute left-0 top-0 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-md p-0 text-text-muted opacity-80 transition-colors hover:bg-surface-2 hover:opacity-100 aria-disabled:opacity-30",
-                    button_next:
-                      "absolute right-0 top-0 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-md p-0 text-text-muted opacity-80 transition-colors hover:bg-surface-2 hover:opacity-100 aria-disabled:opacity-30",
-                    month_grid: "w-full border-collapse",
-                    weekdays: "mt-0.5 flex w-full",
-                    weekday:
-                      "flex-1 select-none text-center text-[0.65rem] font-medium uppercase tracking-wide text-text-muted",
-                    week: "mt-0.5 flex w-full",
-                    day: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20",
-                    day_button:
-                      "size-8 min-h-8 min-w-8 rounded-md p-0 font-normal text-text hover:bg-surface-2 data-[selected-single=true]:!bg-app-accent data-[selected-single=true]:!text-white data-[selected-single=true]:hover:!bg-app-accent",
-                    today: "bg-transparent p-0",
-                    selected: "bg-transparent",
-                    outside: "text-text-faint opacity-45 aria-selected:opacity-100",
-                    disabled: "text-text-faint opacity-30",
+                  isSelected={(task.projectId ?? "general") === project.id}
+                  onClick={() => {
+                    onUpdateTask(task.id, { projectId: project.id })
+                    closeWithAnimation()
                   }}
                 />
-              </div>
-            </div>
+              ))}
+            </>
+          ) : (
+            <>
+              {scheduleMenuView === "options" ? (
+                <>
+                  {QUICK_WHEN_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-text transition-colors hover:bg-surface-2"
+                      onClick={() => {
+                        onUpdateTask(task.id, {
+                          schedule: opt.value,
+                          schedulePickedDate: undefined,
+                        })
+                        closeWithAnimation()
+                      }}
+                    >
+                      <img src={`/icons/${opt.icon}`} alt="" className="h-4 w-4 shrink-0" />
+                      <span className="flex-1 text-left">{opt.label}</span>
+                      {task.schedule === opt.value && (
+                        <Check className="h-3 w-3 shrink-0 text-text-muted" />
+                      )}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-text transition-colors hover:bg-surface-2"
+                    onClick={() => setScheduleMenuView("calendar")}
+                  >
+                    <img src={PICK_DATE_ICON} alt="" className="h-4 w-4 shrink-0" />
+                    <span className="flex-1 text-left text-text">
+                      {whenPickRowLabel(task.schedule, task.schedulePickedDate)}
+                    </span>
+                    {task.schedule === "picked" && task.schedulePickedDate ? (
+                      <Check className="h-3 w-3 shrink-0 text-text-muted" />
+                    ) : null}
+                  </button>
+                </>
+              ) : (
+                <div className="px-1 pb-1 pt-0.5">
+                  <button
+                    type="button"
+                    className="mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+                    onClick={() => setScheduleMenuView("options")}
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                    Back
+                  </button>
+                  <div className="min-w-0" onClick={(e) => e.stopPropagation()}>
+                    <Calendar
+                      navLayout="around"
+                      mode="single"
+                      captionLayout="label"
+                      formatters={whenInlineCalendarFormatters}
+                      selected={
+                        task.schedulePickedDate
+                          ? new Date(`${task.schedulePickedDate}T12:00:00`)
+                          : undefined
+                      }
+                      onSelect={(date) => {
+                        if (date) {
+                          onUpdateTask(task.id, {
+                            schedule: "picked",
+                            schedulePickedDate: format(startOfDay(date), "yyyy-MM-dd"),
+                          })
+                          setScheduleMenuView("options")
+                          closeWithAnimation()
+                        }
+                      }}
+                      defaultMonth={
+                        task.schedulePickedDate
+                          ? new Date(`${task.schedulePickedDate}T12:00:00`)
+                          : new Date()
+                      }
+                      className="w-full max-w-[min(260px,calc(100vw-2rem))] !bg-transparent !p-0 [--cell-size:2rem]"
+                      modifiersClassNames={{
+                        today:
+                          "[&_button:not([data-selected-single=true])]:bg-app-accent [&_button:not([data-selected-single=true])]:text-white [&_button:not([data-selected-single=true])]:hover:bg-app-accent/90",
+                        selected:
+                          "[&_button]:z-[1] [&_button]:ring-2 [&_button]:ring-white/25 [&_button]:ring-offset-0",
+                      }}
+                      classNames={{
+                        months: "flex w-full flex-col gap-0",
+                        month: "relative w-full gap-1 p-0",
+                        month_caption:
+                          "relative mb-0 flex h-8 w-full shrink-0 items-center justify-start px-9",
+                        caption_label:
+                          "w-full text-left text-sm font-semibold tracking-tight text-text",
+                        button_previous:
+                          "absolute left-0 top-0 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-md p-0 text-text-muted opacity-80 transition-colors hover:bg-surface-2 hover:opacity-100 aria-disabled:opacity-30",
+                        button_next:
+                          "absolute right-0 top-0 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-md p-0 text-text-muted opacity-80 transition-colors hover:bg-surface-2 hover:opacity-100 aria-disabled:opacity-30",
+                        month_grid: "w-full border-collapse",
+                        weekdays: "mt-0.5 flex w-full",
+                        weekday:
+                          "flex-1 select-none text-center text-[0.65rem] font-medium uppercase tracking-wide text-text-muted",
+                        week: "mt-0.5 flex w-full",
+                        day: "relative p-0 text-center text-sm focus-within:relative focus-within:z-20",
+                        day_button:
+                          "size-8 min-h-8 min-w-8 rounded-md p-0 font-normal text-text hover:bg-surface-2 data-[selected-single=true]:!bg-app-accent data-[selected-single=true]:!text-white data-[selected-single=true]:hover:!bg-app-accent",
+                        today: "bg-transparent p-0",
+                        selected: "bg-transparent",
+                        outside: "text-text-faint opacity-45 aria-selected:opacity-100",
+                        disabled: "text-text-faint opacity-30",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
           )}
-        </DropdownSubmenu>
+        </TaskActionsSubmenuShell>
       )}
     </div>,
     document.body
@@ -1588,6 +1665,8 @@ function TaskRow({
       onDragEnd={isDraggable ? onDragEnd : undefined}
     >
       <button
+        type="button"
+        onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation()
           onToggleComplete()
@@ -1650,6 +1729,8 @@ function TaskRow({
       </div>
 
       <button
+        type="button"
+        onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation()
           const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -1660,52 +1741,6 @@ function TaskRow({
         <MoreHorizontal className="h-3.5 w-3.5" />
       </button>
     </div>
-  )
-}
-
-function SidebarDisclosure({
-  show,
-  motionKey,
-  children,
-  indented = true,
-  /** `pl-0`: rows use full disclosure width on the left (align with group content). `pr-1.5`: match All/Completed horizontal inset on the right. */
-  innerClassName = "mt-0.5 mb-1 space-y-1 pl-0 pr-1.5",
-}: {
-  show: boolean
-  motionKey: string
-  children: ReactNode
-  /** Task lists under a row use `ml-2` to match header row `px-2` (was `ml-5`, which left an extra left gap vs chevron/row inset). Full-width section bodies set `false`. */
-  indented?: boolean
-  innerClassName?: string
-}) {
-  const reduce = useReducedMotion()
-  const transition = reduce
-    ? { duration: 0 }
-    : { duration: SIDEBAR_DISCLOSURE_DURATION_S, ease: CADENCE_EASE_SLIDE }
-
-  return (
-    <AnimatePresence initial={false}>
-      {show ? (
-        <motion.div
-          key={motionKey}
-          initial={
-            reduce
-              ? false
-              : { height: 0, ...SIDEBAR_DISCLOSURE_CONTENT_SOFT }
-          }
-          animate={{ height: "auto", ...SIDEBAR_DISCLOSURE_CONTENT_CRISP }}
-          exit={
-            reduce
-              ? { height: 0, ...SIDEBAR_DISCLOSURE_CONTENT_CRISP }
-              : { height: 0, ...SIDEBAR_DISCLOSURE_CONTENT_SOFT }
-          }
-          transition={transition}
-          className={cn("overflow-hidden", indented && "ml-2")}
-        >
-          <div className={innerClassName}>{children}</div>
-        </motion.div>
-      ) : null}
-    </AnimatePresence>
   )
 }
 

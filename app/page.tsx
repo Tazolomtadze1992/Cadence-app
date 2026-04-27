@@ -2,21 +2,34 @@
 
 import { useState, useCallback, useMemo, useEffect, type MouseEvent as ReactMouseEvent } from "react"
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
-import { startOfWeek, addDays, addWeeks, startOfDay, format, parseISO } from "date-fns"
+import {
+  startOfWeek,
+  addDays,
+  addWeeks,
+  startOfDay,
+  format,
+  parseISO,
+  differenceInCalendarDays,
+  isValid,
+} from "date-fns"
 import { AppSidebar } from "@/components/cadence/sidebar"
+import { SidebarModeRail } from "@/components/cadence/sidebar-mode-rail"
 import { TopBar, type AppMode } from "@/components/cadence/top-bar"
 import { AccountPanel } from "@/components/cadence/account-panel"
 import { CalendarGrid } from "@/components/cadence/calendar-grid"
 import { CommandBar } from "@/components/cadence/command-bar"
 import { CanvasBoard, type CanvasItem, type CanvasProject } from "@/components/cadence/canvas-board"
 import { CanvasSidebar } from "../components/cadence/canvas-sidebar"
-import { CanvasCommandBar } from "@/components/cadence/canvas-command-bar"
 import { SEED_TAGS } from "@/components/cadence/task-editor-modal"
+import { cn } from "@/lib/utils"
 import {
   getVisibleAllTabTaskOrder,
   getVisibleCompletedTabTaskOrder,
 } from "@/components/cadence/sidebar-visible-order"
-import { CADENCE_EASE_SLIDE, SIDEBAR_DISCLOSURE_DURATION_S } from "@/lib/cadence-motion"
+import {
+  SIDEBAR_PANEL_SLIDE_VARIANTS,
+  sidebarPanelSlideTransition,
+} from "@/lib/cadence-motion"
 import type { DragCreatePayload, EventMovePayload, EventResizePayload, SidebarTaskDropPayload } from "@/components/cadence/calendar-grid"
 import type {
   TaskEditorInitialData,
@@ -188,26 +201,6 @@ const STORAGE_KEYS = {
   sidebarView: "cadence_sidebar_view",
 } as const
 
-const sidebarShellSlideVariants = {
-  enter: (direction: 1 | -1) => ({
-    x: direction > 0 ? "100%" : "-100%",
-    opacity: 0,
-  }),
-  center: {
-    x: 0,
-    opacity: 1,
-  },
-  exit: (direction: 1 | -1) => ({
-    x: direction > 0 ? "-100%" : "100%",
-    opacity: 0,
-  }),
-}
-
-const sidebarShellSlideTransition = {
-  duration: SIDEBAR_DISCLOSURE_DURATION_S,
-  ease: CADENCE_EASE_SLIDE,
-}
-
 // Cadence App
 export default function CadenceApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -232,38 +225,40 @@ export default function CadenceApp() {
   } | null>(null)
   const [sidebarSelectedTaskIds, setSidebarSelectedTaskIds] = useState<string[]>([])
   const [sidebarSelectionAnchorId, setSidebarSelectionAnchorId] = useState<string | null>(null)
-  const [sidebarShellDirection, setSidebarShellDirection] = useState<1 | -1>(1)
+  /** Schedule ↔ Canvas sidebar body: 1 = canvas enters from right; -1 = schedule enters from left. */
+  const [scheduleCanvasSlideDirection, setScheduleCanvasSlideDirection] = useState<1 | -1>(1)
   const shouldReduceMotion = useReducedMotion()
-  const sidebarShellTransition = shouldReduceMotion
-    ? { duration: 0 }
-    : sidebarShellSlideTransition
+  const scheduleCanvasSlideTransition = useMemo(
+    () => sidebarPanelSlideTransition(shouldReduceMotion),
+    [shouldReduceMotion]
+  )
 
   const weekStart = useMemo(() => startOfWeek(anchorDate, { weekStartsOn: 0 }), [anchorDate])
 
   /** Incomplete tasks only: completed tasks stay in app state / sidebar Completed tab but are excluded from the grid. */
   const calendarGridExternalEvents = useMemo(() => {
+    const week0 = startOfDay(weekStart)
     const byId = new Map(canvasProjects.map((p) => [p.id, p] as const))
-    return tasks
-      .filter((t) => !t.completed)
-      .map((t) => {
-        const pid = (t.projectId ?? "general").trim() || "general"
-        const project = byId.get(pid) ?? byId.get("general") ?? null
-        return {
+    return tasks.flatMap((t) => {
+      if (t.completed) return []
+      const raw = typeof t.dueDate === "string" ? t.dueDate.trim() : ""
+      if (!raw) return []
+      const due = startOfDay(parseISO(raw))
+      if (!isValid(due)) return []
+      const col = differenceInCalendarDays(due, week0)
+      if (col < 0 || col > 6) return []
+      const pid = (t.projectId ?? "general").trim() || "general"
+      const project = byId.get(pid) ?? byId.get("general") ?? null
+      return [
+        {
           ...t,
+          dayIndex: col,
           tagColor: project?.color ?? t.tagColor ?? "#94a3b8",
           projectName: project?.name,
-        }
-      })
-  }, [canvasProjects, tasks])
-
-  const taskCountByProjectId = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const t of tasks) {
-      const pid = (t.projectId ?? "general").trim() || "general"
-      counts[pid] = (counts[pid] ?? 0) + 1
-    }
-    return counts
-  }, [tasks])
+        },
+      ]
+    })
+  }, [canvasProjects, tasks, weekStart])
 
   const visibleAllTabTaskOrder = useMemo(
     () => getVisibleAllTabTaskOrder(tasks, canvasProjects),
@@ -281,8 +276,11 @@ export default function CadenceApp() {
 
   const handleSidebarTaskRowClick = useCallback(
     (taskId: string, e: ReactMouseEvent, tab: "all" | "completed") => {
+      if (!e.shiftKey) return
+
       const order = tab === "all" ? visibleAllTabTaskOrder : visibleCompletedTabTaskOrder
-      if (e.shiftKey && sidebarSelectionAnchorId) {
+
+      if (sidebarSelectionAnchorId) {
         const ia = order.indexOf(sidebarSelectionAnchorId)
         const ib = order.indexOf(taskId)
         if (ia === -1 || ib === -1) {
@@ -295,10 +293,25 @@ export default function CadenceApp() {
         setSidebarSelectedTaskIds(order.slice(lo, hi + 1))
         return
       }
-      setSidebarSelectedTaskIds([taskId])
-      setSidebarSelectionAnchorId(taskId)
+
+      const idSet = new Set(sidebarSelectedTaskIds)
+      if (idSet.has(taskId)) {
+        idSet.delete(taskId)
+        const next = [...idSet]
+        setSidebarSelectedTaskIds(next)
+        if (next.length === 0) setSidebarSelectionAnchorId(null)
+      } else {
+        idSet.add(taskId)
+        setSidebarSelectedTaskIds([...idSet])
+        setSidebarSelectionAnchorId(taskId)
+      }
     },
-    [visibleAllTabTaskOrder, visibleCompletedTabTaskOrder, sidebarSelectionAnchorId]
+    [
+      visibleAllTabTaskOrder,
+      visibleCompletedTabTaskOrder,
+      sidebarSelectionAnchorId,
+      sidebarSelectedTaskIds,
+    ]
   )
 
   const handleBulkMarkDone = useCallback(() => {
@@ -543,16 +556,67 @@ export default function CadenceApp() {
   const handleSidebarModeClick = useCallback(
     (view: "tasks" | "agenda" | "canvas") => {
       if (view === "canvas") {
-        if (appMode !== "canvas") setSidebarShellDirection(1)
-        setAppMode("canvas")
+        clearSidebarTaskSelection()
+        setAppMode((prev) => {
+          if (prev !== "canvas") setScheduleCanvasSlideDirection(1)
+          return "canvas"
+        })
         return
       }
-      if (appMode === "canvas") setSidebarShellDirection(-1)
-      setAppMode("schedule")
+      setAppMode((prev) => {
+        if (prev === "canvas") setScheduleCanvasSlideDirection(-1)
+        return "schedule"
+      })
       setSidebarView(view)
     },
-    [appMode]
+    [clearSidebarTaskSelection]
   )
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return
+      }
+
+      if (e.shiftKey && e.key.toLowerCase() === "s" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        setSidebarCollapsed((c) => !c)
+        return
+      }
+
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+
+      if (e.key === "t" || e.key === "T") {
+        e.preventDefault()
+        setAppMode((prev) => {
+          if (prev === "canvas") setScheduleCanvasSlideDirection(-1)
+          return "schedule"
+        })
+        setSidebarView("tasks")
+      } else if (e.key === "a" || e.key === "A") {
+        e.preventDefault()
+        setAppMode((prev) => {
+          if (prev === "canvas") setScheduleCanvasSlideDirection(-1)
+          return "schedule"
+        })
+        setSidebarView("agenda")
+      } else if (e.key === "c" || e.key === "C") {
+        e.preventDefault()
+        clearSidebarTaskSelection()
+        setAppMode((prev) => {
+          if (prev !== "canvas") setScheduleCanvasSlideDirection(1)
+          return "canvas"
+        })
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [clearSidebarTaskSelection])
 
   const createCanvasNote = useCallback(
     (projectId: string, x: number, y: number) => {
@@ -734,9 +798,19 @@ export default function CadenceApp() {
       console.warn("[page] handleEventDoubleClick: no task found for id", eventId)
       return
     }
+    const ws = startOfDay(weekStart)
+    let editorDayIndex = t.dayIndex
+    const rawDue = typeof t.dueDate === "string" ? t.dueDate.trim() : ""
+    if (rawDue) {
+      const due = startOfDay(parseISO(rawDue))
+      if (isValid(due)) {
+        const col = differenceInCalendarDays(due, ws)
+        if (col >= 0 && col <= 6) editorDayIndex = col
+      }
+    }
     setEditingTask({
       id: t.id,
-      dayIndex: t.dayIndex,
+      dayIndex: editorDayIndex,
       title: t.title,
       schedule: t.schedule,
       tag: t.tag,
@@ -750,7 +824,7 @@ export default function CadenceApp() {
         ? startOfDay(parseISO(t.schedulePickedDate)).toISOString()
         : undefined,
     })
-  }, [tasks])
+  }, [tasks, weekStart])
 
   const handleEditSave = useCallback((id: string, data: TaskEditorSaveData) => {
     const project =
@@ -1018,68 +1092,81 @@ export default function CadenceApp() {
 
       {/* Content: sidebar + main area side by side */}
       <div className="flex flex-1 min-h-0">
-        <AnimatePresence initial={false} custom={sidebarShellDirection} mode="popLayout">
-          {appMode === "schedule" ? (
-            <motion.div
-              key="scheduleSidebar"
-              custom={sidebarShellDirection}
-              variants={sidebarShellSlideVariants}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={sidebarShellTransition}
-            >
-              <AppSidebar
-                collapsed={sidebarCollapsed}
-                onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-                tasks={tasks}
-                projects={canvasProjects}
-                onUpdateProject={handleCanvasProjectUpdate}
-                onDeleteProject={handleCanvasProjectDelete}
-                onToggleComplete={handleToggleComplete}
-                onUpdateTask={handleUpdateTask}
-                onDeleteTask={handleDeleteTask}
-                onQuickAddTask={handleSidebarQuickAdd}
-                onDragTaskStart={setDraggingSidebarTask}
-                onDragTaskEnd={() => setDraggingSidebarTask(null)}
-                appMode={appMode}
-                sidebarView={sidebarView}
-                onSidebarModeClick={handleSidebarModeClick}
-                selectedTaskIds={sidebarSelectedTaskIds}
-                onSidebarTaskRowClick={handleSidebarTaskRowClick}
-                onSidebarTasksTabChange={clearSidebarTaskSelection}
-              />
-            </motion.div>
-          ) : (
-            <motion.div
-              key="canvasSidebar"
-              custom={sidebarShellDirection}
-              variants={sidebarShellSlideVariants}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={sidebarShellTransition}
-            >
-              <CanvasSidebar
-                collapsed={sidebarCollapsed}
-                onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-                projects={canvasProjects}
-                projectTaskCounts={taskCountByProjectId}
-                activeProjectId={activeCanvasProject?.id ?? null}
-                onSelectProject={setActiveProjectId}
-                onUpdateProject={handleCanvasProjectUpdate}
-                onDeleteProject={handleCanvasProjectDelete}
-                onQuickAddTask={handleSidebarQuickAdd}
-                appMode={appMode}
-                sidebarView={sidebarView}
-                onSidebarModeClick={handleSidebarModeClick}
-              />
-            </motion.div>
+        <aside
+          className={cn(
+            "flex h-full shrink-0 flex-col overflow-hidden bg-background transition-[width,opacity] duration-200 ease-out",
+            sidebarCollapsed ? "w-0 opacity-0" : "w-[260px] opacity-100"
           )}
-        </AnimatePresence>
+        >
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            <AnimatePresence
+              initial={false}
+              custom={scheduleCanvasSlideDirection}
+              mode="popLayout"
+            >
+              {appMode === "schedule" ? (
+                <motion.div
+                  key="sidebar-schedule"
+                  custom={scheduleCanvasSlideDirection}
+                  variants={SIDEBAR_PANEL_SLIDE_VARIANTS}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                  transition={scheduleCanvasSlideTransition}
+                  className="absolute inset-0 flex flex-col overflow-hidden"
+                >
+                  <AppSidebar
+                    collapsed={sidebarCollapsed}
+                    tasks={tasks}
+                    projects={canvasProjects}
+                    onUpdateProject={handleCanvasProjectUpdate}
+                    onDeleteProject={handleCanvasProjectDelete}
+                    onToggleComplete={handleToggleComplete}
+                    onUpdateTask={handleUpdateTask}
+                    onDeleteTask={handleDeleteTask}
+                    onQuickAddTask={handleSidebarQuickAdd}
+                    onDragTaskStart={setDraggingSidebarTask}
+                    onDragTaskEnd={() => setDraggingSidebarTask(null)}
+                    sidebarView={sidebarView}
+                    onSidebarModeClick={handleSidebarModeClick}
+                    selectedTaskIds={sidebarSelectedTaskIds}
+                    onSidebarTaskRowClick={handleSidebarTaskRowClick}
+                    onSidebarTasksTabChange={clearSidebarTaskSelection}
+                  />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="sidebar-canvas"
+                  custom={scheduleCanvasSlideDirection}
+                  variants={SIDEBAR_PANEL_SLIDE_VARIANTS}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                  transition={scheduleCanvasSlideTransition}
+                  className="absolute inset-0 flex flex-col overflow-hidden"
+                >
+                  <CanvasSidebar
+                    collapsed={sidebarCollapsed}
+                    projects={canvasProjects}
+                    activeProjectId={activeCanvasProject?.id ?? null}
+                    onSelectProject={setActiveProjectId}
+                    onUpdateProject={handleCanvasProjectUpdate}
+                    onDeleteProject={handleCanvasProjectDelete}
+                    onQuickAddTask={handleSidebarQuickAdd}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+          <SidebarModeRail
+            appMode={appMode}
+            sidebarView={sidebarView}
+            onSidebarModeClick={handleSidebarModeClick}
+          />
+        </aside>
 
-        {appMode === "schedule" ? (
-          <div className="relative flex flex-1 flex-col min-w-0 overflow-hidden rounded-tl-lg bg-calendar-bg shadow-[0_10px_15px_-3px_rgba(0,0,0,0.1),0_4px_6px_-4px_rgba(0,0,0,0.1)]">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-tl-lg bg-calendar-bg shadow-[0_10px_15px_-3px_rgba(0,0,0,0.1),0_4px_6px_-4px_rgba(0,0,0,0.1)]">
+          {appMode === "schedule" ? (
             <CalendarGrid
               onDragCreate={handleDragCreate}
               onEventMove={handleEventMove}
@@ -1091,36 +1178,7 @@ export default function CadenceApp() {
               anchorDate={anchorDate}
               draggingSidebarTask={draggingSidebarTask}
             />
-
-            <CommandBar
-              externalOpen={pendingOpen}
-              onExternalOpenHandled={handleExternalOpenHandled}
-              onTaskSave={handleTaskSave}
-              editingTask={editingTask}
-              onEditSave={handleEditSave}
-              onEditDone={handleEditDone}
-              onGoToDate={handleGoToDate}
-              onGoToToday={handleGoToToday}
-              onPrevWeek={handlePrevWeek}
-              onNextWeek={handleNextWeek}
-              projects={canvasProjects}
-              onEditorOpen={clearSidebarTaskSelection}
-              bulkSelection={
-                sidebarView === "tasks" && sidebarSelectedTaskIds.length > 0
-                  ? {
-                      count: sidebarSelectedTaskIds.length,
-                      onExit: clearSidebarTaskSelection,
-                      onDone: handleBulkMarkDone,
-                      onDelete: handleBulkDelete,
-                      onProject: handleBulkProject,
-                      onPriority: handleBulkPriority,
-                    }
-                  : null
-              }
-            />
-          </div>
-        ) : (
-          <div className="relative flex flex-1 flex-col min-w-0 overflow-hidden rounded-tl-lg bg-calendar-bg">
+          ) : (
             <CanvasBoard
               project={activeCanvasProject}
               onItemPositionChange={handleCanvasItemPositionChange}
@@ -1133,12 +1191,45 @@ export default function CadenceApp() {
               onAddNoteAtPosition={createCanvasNote}
               onDeleteItem={handleCanvasItemDelete}
             />
-            <CanvasCommandBar
-              onAddNote={handleAddCanvasNote}
-              onAddImageFile={handleAddCanvasImageFile}
-            />
+          )}
+
+          <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex items-end justify-center px-4">
+            <div className="pointer-events-auto flex w-full max-w-[calc(100vw-2rem)] justify-center">
+              <CommandBar
+                dock="inline"
+                appMode={appMode}
+                onAddCanvasNote={handleAddCanvasNote}
+                onAddCanvasImageFile={handleAddCanvasImageFile}
+                externalOpen={pendingOpen}
+                onExternalOpenHandled={handleExternalOpenHandled}
+                onTaskSave={handleTaskSave}
+                editingTask={editingTask}
+                onEditSave={handleEditSave}
+                onEditDone={handleEditDone}
+                onGoToDate={handleGoToDate}
+                onGoToToday={handleGoToToday}
+                onPrevWeek={handlePrevWeek}
+                onNextWeek={handleNextWeek}
+                projects={canvasProjects}
+                onEditorOpen={clearSidebarTaskSelection}
+                bulkSelection={
+                  appMode === "schedule" &&
+                  sidebarView === "tasks" &&
+                  sidebarSelectedTaskIds.length > 0
+                    ? {
+                        count: sidebarSelectedTaskIds.length,
+                        onExit: clearSidebarTaskSelection,
+                        onDone: handleBulkMarkDone,
+                        onDelete: handleBulkDelete,
+                        onProject: handleBulkProject,
+                        onPriority: handleBulkPriority,
+                      }
+                    : null
+                }
+              />
+            </div>
           </div>
-        )}
+        </div>
       </div>
     </div>
   )
