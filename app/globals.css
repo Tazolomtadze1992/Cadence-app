@@ -44,7 +44,7 @@
   --text: #1c1917;
   --text-muted: #78716c;
   --text-faint: #a8a29e;
-  --app-accent: #f97316;
+  --app-accent: #FF6800;
   --app-accent-foreground: #ffffff;
   --calendar-bg: #fafaf9;
 
@@ -94,7 +94,7 @@
   --text: #fafafa;
   --text-muted: #8a8a8a;
   --text-faint: #8E8F90;
-  --app-accent: #f97316;
+  --app-accent: #FF6800;
   --app-accent-foreground: #ffffff;
   --calendar-bg: #1E2021;
 }

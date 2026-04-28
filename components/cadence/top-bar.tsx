@@ -52,7 +52,7 @@ export function TopBar({
           className="flex h-7 w-7 items-center justify-center rounded-full bg-app-accent text-xs font-semibold text-app-accent-foreground transition-opacity hover:opacity-90"
           aria-label="Open account settings"
         >
-          TS
+          TZ
         </button>
       </div>
     </header>

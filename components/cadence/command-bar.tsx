@@ -57,6 +57,30 @@ const COLLAPSED_HEIGHT = 52
 
 const SHELL_BEZIER_CSS = CADENCE_EASE_OUT_CSS
 
+/** Subtle exit nudge for date-search face (GPU-friendly; pairs with shell canvas strip language). */
+const DATE_SEARCH_EXIT_NUDGE_PX = 4
+
+/**
+ * Filled-input “Go to date” exit: one Dynamic-Island-style morph (shell + layered faces together).
+ * Shell uses SHELL_CLOSE_S; faces choreographed in ms on the same curve.
+ */
+const FILLED_EXIT_MORPH_MS = SHELL_CLOSE_MS
+/** Date face exits slightly faster than the shell morph. */
+const FILLED_EXIT_DATE_FACE_MS = Math.round(SHELL_CLOSE_MS * 0.72)
+/** Idle fades in mid-morph, not after the shell stops. */
+const FILLED_EXIT_IDLE_DELAY_MS = Math.round(SHELL_CLOSE_MS * 0.52)
+const FILLED_EXIT_IDLE_FADE_MS = Math.max(
+  96,
+  FILLED_EXIT_MORPH_MS - FILLED_EXIT_IDLE_DELAY_MS + 28
+)
+const FILLED_EXIT_MORPH_CLEANUP_MS =
+  Math.max(
+    FILLED_EXIT_MORPH_MS,
+    FILLED_EXIT_IDLE_DELAY_MS + FILLED_EXIT_IDLE_FADE_MS
+  ) + 32
+
+type DateSearchExitPhase = "inactive" | "filled-exit-morph"
+
 // ─── Date Parsing ────────────────────────────────────────────────────────────
 function parseNaturalDate(input: string): Date | null {
   const text = input.trim().toLowerCase()
@@ -297,19 +321,23 @@ export function CommandBar({
   const [dateQuery, setDateQuery] = useState("")
   /** Keeps suggestion row height until after exit opacity + shell timing (see exitDateSearchMode). */
   const [deferDateQueryClear, setDeferDateQueryClear] = useState(false)
-  const dateQueryClearTimerRef = useRef<number | null>(null)
+  const [dateSearchExitPhase, setDateSearchExitPhase] = useState<DateSearchExitPhase>("inactive")
+  const dateSearchExitSeqTimersRef = useRef<number[]>([])
   const dateInputRef = useRef<HTMLInputElement>(null)
 
   const parsedDate = useMemo(() => parseNaturalDate(dateQuery), [dateQuery])
 
-  const clearDateQueryClearTimer = useCallback(() => {
-    if (dateQueryClearTimerRef.current != null) {
-      window.clearTimeout(dateQueryClearTimerRef.current)
-      dateQueryClearTimerRef.current = null
+  const clearDateSearchExitSequenceTimers = useCallback(() => {
+    for (const id of dateSearchExitSeqTimersRef.current) {
+      window.clearTimeout(id)
     }
+    dateSearchExitSeqTimersRef.current = []
   }, [])
 
-  useEffect(() => () => clearDateQueryClearTimer(), [clearDateQueryClearTimer])
+  useEffect(
+    () => () => clearDateSearchExitSequenceTimers(),
+    [clearDateSearchExitSequenceTimers]
+  )
 
   // Focus input when entering date search mode; blur when leaving
   useEffect(() => {
@@ -321,33 +349,48 @@ export function CommandBar({
   }, [dateSearchMode])
 
   const enterDateSearchMode = useCallback(() => {
-    clearDateQueryClearTimer()
+    clearDateSearchExitSequenceTimers()
+    setDateSearchExitPhase("inactive")
     setDeferDateQueryClear(false)
     setDateSearchMode(true)
-  }, [clearDateQueryClearTimer])
+  }, [clearDateSearchExitSequenceTimers])
 
   const exitDateSearchMode = useCallback(
     (immediate = false) => {
-      clearDateQueryClearTimer()
+      clearDateSearchExitSequenceTimers()
       setDeferDateQueryClear(false)
-      setDateSearchMode(false)
+
       if (immediate) {
+        setDateSearchExitPhase("inactive")
+        setDateSearchMode(false)
         setDateQuery("")
         return
       }
+
       if (dateQuery.trim()) {
-        setDeferDateQueryClear(true)
-        const ms = shouldReduceMotion ? 0 : SHELL_CLOSE_MS
-        dateQueryClearTimerRef.current = window.setTimeout(() => {
-          dateQueryClearTimerRef.current = null
+        if (shouldReduceMotion) {
+          setDateSearchExitPhase("inactive")
+          setDateSearchMode(false)
           setDateQuery("")
-          setDeferDateQueryClear(false)
-        }, ms)
+        } else {
+          setDeferDateQueryClear(true)
+          setDateSearchMode(false)
+          setDateSearchExitPhase("filled-exit-morph")
+          const id = window.setTimeout(() => {
+            setDateSearchExitPhase("inactive")
+            setDateQuery("")
+            setDeferDateQueryClear(false)
+            dateSearchExitSeqTimersRef.current = []
+          }, FILLED_EXIT_MORPH_CLEANUP_MS)
+          dateSearchExitSeqTimersRef.current = [id]
+        }
       } else {
+        setDateSearchExitPhase("inactive")
+        setDateSearchMode(false)
         setDateQuery("")
       }
     },
-    [clearDateQueryClearTimer, dateQuery, shouldReduceMotion]
+    [clearDateSearchExitSequenceTimers, dateQuery, shouldReduceMotion]
   )
 
   const [bulkPicker, setBulkPicker] = useState<null | { kind: "project" | "priority"; rect: DOMRect }>(
@@ -357,6 +400,11 @@ export function CommandBar({
   const canvasStripMeasureRef = useRef<HTMLDivElement>(null)
   const canvasFileInputRef = useRef<HTMLInputElement>(null)
   const [canvasStripW, setCanvasStripW] = useState(0)
+  /**
+   * After first mount, shell/collapsed width morphs are allowed. Disabled until then so measurement
+   * does not animate from the pre-measure fallback width (avoids “tiny + → full bar” on load).
+   */
+  const [shellWidthMorphEnabled, setShellWidthMorphEnabled] = useState(false)
   /** After canvas→schedule: delay idle/bulk opacity in so shell width can lead (ms). */
   const [scheduleRevealDelayMs, setScheduleRevealDelayMs] = useState(0)
   const wasCanvasRef = useRef(false)
@@ -459,7 +507,9 @@ export function CommandBar({
           bulkSelection.onExit()
           return
         }
-        if (dateSearchMode) {
+        if (dateSearchExitPhase !== "inactive") {
+          exitDateSearchMode(true)
+        } else if (dateSearchMode) {
           exitDateSearchMode()
         } else if (expanded) {
           setExpanded(false)
@@ -489,7 +539,15 @@ export function CommandBar({
         ) {
           return
         }
-        if (expanded || dateSearchMode || bulkSelection || bulkPicker != null || isCanvas) return
+        if (
+          expanded ||
+          dateSearchMode ||
+          dateSearchExitPhase !== "inactive" ||
+          bulkSelection ||
+          bulkPicker != null ||
+          isCanvas
+        )
+          return
         e.preventDefault()
         openNewTaskEditor()
       }
@@ -499,6 +557,7 @@ export function CommandBar({
   }, [
     expanded,
     dateSearchMode,
+    dateSearchExitPhase,
     parsedDate,
     exitDateSearchMode,
     confirmGoToDate,
@@ -532,17 +591,6 @@ export function CommandBar({
     if (cw > 0) setCanvasStripW(Math.ceil(cw))
     if (dw > 0) setDateStripW(Math.ceil(dw))
   }, [])
-
-  const shellTransition = shouldReduceMotion
-    ? { duration: 0 }
-    : {
-        duration: expanded ? SHELL_OPEN_S : SHELL_CLOSE_S,
-        ease: CADENCE_EASE_OUT,
-      }
-
-  const shellOpacityTransition = shouldReduceMotion
-    ? "none"
-    : `opacity ${expanded ? SHELL_OPEN_MS : SHELL_CLOSE_MS}ms ${SHELL_BEZIER_CSS}`
 
   const bulkActive = Boolean(bulkSelection)
   /** Longhand only — React warns if `transition` shorthand is mixed with `transitionDelay`. */
@@ -586,15 +634,38 @@ export function CommandBar({
   ])
   const bulkFaceModel = bulkSelection ?? BULK_FACE_LAYOUT_STUB
 
-  /** Crossfade schedule strip vs date-search face (pairs with collapsed shell timing). */
-  const scheduleDateFaceOpacityStyle = useMemo((): CSSProperties => {
-    if (shouldReduceMotion) return { transition: "none" }
-    return {
-      transitionProperty: "opacity",
-      transitionDuration: `${SHELL_CLOSE_MS}ms`,
-      transitionTimingFunction: SHELL_BEZIER_CSS,
+  /**
+   * Entering date mode: delay date strip fade-in (idle hides immediately). Exiting date mode:
+   * phased filled exit handles timing; empty exit uses immediate idle (delay 0).
+   */
+  const [idleStripOpacityEnterDelayMs, setIdleStripOpacityEnterDelayMs] = useState(0)
+  const [dateStripOpacityEnterDelayMs, setDateStripOpacityEnterDelayMs] = useState(0)
+  const prevDateSearchModeRef = useRef(dateSearchMode)
+
+  useLayoutEffect(() => {
+    if (shouldReduceMotion) {
+      setIdleStripOpacityEnterDelayMs(0)
+      setDateStripOpacityEnterDelayMs(0)
+      prevDateSearchModeRef.current = dateSearchMode
+      return
     }
-  }, [shouldReduceMotion])
+    const prev = prevDateSearchModeRef.current
+
+    if (prev === false && dateSearchMode === true) {
+      setDateStripOpacityEnterDelayMs(SHELL_CLOSE_MS)
+      setIdleStripOpacityEnterDelayMs(0)
+      prevDateSearchModeRef.current = dateSearchMode
+      const id = window.setTimeout(() => setDateStripOpacityEnterDelayMs(0), SHELL_CLOSE_MS * 2)
+      return () => window.clearTimeout(id)
+    }
+    if (prev === true && dateSearchMode === false) {
+      setIdleStripOpacityEnterDelayMs(0)
+      setDateStripOpacityEnterDelayMs(0)
+      prevDateSearchModeRef.current = dateSearchMode
+      return
+    }
+    prevDateSearchModeRef.current = dateSearchMode
+  }, [dateSearchMode, shouldReduceMotion])
 
   useLayoutEffect(() => {
     measureCollapsedStripWidths()
@@ -606,6 +677,7 @@ export function CommandBar({
     dateSearchMode,
     dateQuery,
     deferDateQueryClear,
+    dateSearchExitPhase,
   ])
 
   useEffect(() => {
@@ -627,30 +699,150 @@ export function CommandBar({
       ? bulkActive
         ? bulkStripW
         : idleStripW
-      : Math.max(idleStripW, bulkStripW, 48)
+      : Math.max(idleStripW, bulkStripW)
 
   /** Idle strip width — expanded task editor matches this so the shell does not grow with editor content. */
   const idleCommandBarWidth =
-    idleStripW > 0 ? idleStripW : Math.max(collapsedStripTargetWidth, 48)
+    idleStripW > 0 ? idleStripW : Math.max(collapsedStripTargetWidth, 0)
 
   /** Single shell width: canvas strip, idle, expanded editor, or date-search row. */
   const shellTargetWidth: number | "auto" = isCanvas
     ? canvasStripW > 0
       ? canvasStripW
-      : Math.max(collapsedStripTargetWidth, 48)
+      : Math.max(collapsedStripTargetWidth, 0)
     : dateSearchMode && !expanded
       ? dateStripW > 0
         ? dateStripW
-        : Math.max(collapsedStripTargetWidth, 48)
+        : Math.max(collapsedStripTargetWidth, 0)
       : expanded
         ? idleCommandBarWidth
         : collapsedStripTargetWidth
 
+  /**
+   * First visible paint uses exact measured widths only (no fallback), so the shell stays hidden until
+   * layout refs report real pixels — avoids fallback→measured width creep on load.
+   */
+  const shellMeasureReady =
+    isCanvas
+      ? canvasStripW > 0
+      : expanded
+        ? idleStripW > 0
+        : dateSearchMode
+          ? dateStripW > 0
+          : idleStripW > 0 && bulkStripW > 0
+
+  useEffect(() => {
+    if (!shellMeasureReady) return
+    if (shellWidthMorphEnabled) return
+    const id = window.requestAnimationFrame(() => {
+      setShellWidthMorphEnabled(true)
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [shellMeasureReady, shellWidthMorphEnabled])
+
+  const shellTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : {
+        duration: expanded ? SHELL_OPEN_S : SHELL_CLOSE_S,
+        ease: CADENCE_EASE_OUT,
+      }
+
+  /** Height always morphs when reduced-motion is off; width skips tween until measured + post-mount (see `shellMeasureReady`, `shellWidthMorphEnabled`). */
+  const shellMotionTransition =
+    shouldReduceMotion
+      ? { duration: 0 }
+      : {
+          height: shellTransition,
+          width:
+            shellWidthMorphEnabled && shellMeasureReady
+              ? shellTransition
+              : { duration: 0 },
+        }
+
+  const shellOpacityTransition = shouldReduceMotion
+    ? "none"
+    : `opacity ${expanded ? SHELL_OPEN_MS : SHELL_CLOSE_MS}ms ${SHELL_BEZIER_CSS}`
+
   const dateSuggestionRowVisible =
     Boolean(dateQuery.trim()) && (dateSearchMode || deferDateQueryClear)
-  const collapsedScheduleInnerMinHeight = dateSuggestionRowVisible
+
+  /** Tall shell only while date search is active (morph to idle height as soon as mode ends). */
+  const scheduleShellTallForDateSuggestion =
+    Boolean(dateQuery.trim()) && dateSearchMode
+
+  const collapsedScheduleInnerMinHeight = scheduleShellTallForDateSuggestion
     ? COLLAPSED_HEIGHT + 56
     : COLLAPSED_HEIGHT
+
+  const dateSearchStripSemanticallyVisible =
+    dateSearchMode ||
+    dateSearchExitPhase === "filled-exit-morph" ||
+    (deferDateQueryClear && Boolean(dateQuery.trim()))
+
+  const idleScheduleOpacityEnterDelayMs =
+    shouldReduceMotion || dateSearchMode || dateSearchExitPhase !== "inactive"
+      ? 0
+      : idleStripOpacityEnterDelayMs
+
+  const idleScheduleFaceStyle: CSSProperties = (() => {
+    if (shouldReduceMotion) {
+      return { opacity: dateSearchMode ? 0 : 1, transition: "none" }
+    }
+    if (dateSearchExitPhase === "filled-exit-morph") {
+      return {
+        opacity: 1,
+        transitionProperty: "opacity",
+        transitionDuration: `${FILLED_EXIT_IDLE_FADE_MS}ms`,
+        transitionTimingFunction: SHELL_BEZIER_CSS,
+        transitionDelay: `${FILLED_EXIT_IDLE_DELAY_MS}ms`,
+      }
+    }
+    return {
+      opacity: dateSearchMode ? 0 : 1,
+      transitionProperty: "opacity",
+      transitionDuration: `${SHELL_CLOSE_MS}ms`,
+      transitionTimingFunction: SHELL_BEZIER_CSS,
+      transitionDelay: `${idleScheduleOpacityEnterDelayMs}ms`,
+    }
+  })()
+
+  const dateSearchFaceStyle: CSSProperties = (() => {
+    if (shouldReduceMotion) {
+      return {
+        opacity: dateSearchMode ? 1 : 0,
+        transform: "translateX(0) scale(1)",
+        transition: "none",
+      }
+    }
+    if (dateSearchExitPhase === "filled-exit-morph") {
+      return {
+        opacity: 0,
+        transform: `translateX(-${DATE_SEARCH_EXIT_NUDGE_PX}px) scale(0.98)`,
+        transitionProperty: "opacity, transform",
+        transitionDuration: `${FILLED_EXIT_DATE_FACE_MS}ms`,
+        transitionTimingFunction: SHELL_BEZIER_CSS,
+        transitionDelay: "0ms",
+      }
+    }
+    if (dateSearchMode) {
+      return {
+        opacity: 1,
+        transform: "translateX(0) scale(1)",
+        transitionProperty: "opacity, transform",
+        transitionDuration: `${SHELL_CLOSE_MS}ms`,
+        transitionTimingFunction: SHELL_BEZIER_CSS,
+        transitionDelay: `${dateStripOpacityEnterDelayMs}ms`,
+      }
+    }
+    return {
+      opacity: 0,
+      transform: "translateX(0) scale(1)",
+      transitionProperty: "opacity, transform",
+      transitionDuration: `${SHELL_CLOSE_MS}ms`,
+      transitionTimingFunction: SHELL_BEZIER_CSS,
+      transitionDelay: "0ms",
+    }
+  })()
 
   const collapsedStripMotionTransition = shouldReduceMotion || expanded
     ? { duration: 0 }
@@ -658,6 +850,11 @@ export function CommandBar({
         duration: bulkActive ? SHELL_OPEN_S : SHELL_CLOSE_S,
         ease: CADENCE_EASE_OUT,
       }
+
+  const collapsedStripMotionTransitionResolved =
+    shouldReduceMotion || expanded || !shellWidthMorphEnabled || !shellMeasureReady
+      ? { duration: 0 }
+      : collapsedStripMotionTransition
 
   const handleShellAnimationComplete = useCallback(() => {
     if (!expanded) setMountEditor(false)
@@ -677,19 +874,23 @@ export function CommandBar({
     <>
       <motion.div
         className="pointer-events-auto relative max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border/50 bg-secondary shadow-sm"
-        style={{ transformOrigin: "0% 100%" }}
+        style={{
+          transformOrigin: "0% 100%",
+          opacity: shellMeasureReady ? 1 : 0,
+          pointerEvents: shellMeasureReady ? "auto" : "none",
+        }}
         initial={false}
         animate={{
           height: isCanvas
             ? COLLAPSED_HEIGHT
             : expanded
               ? expandedHeight
-              : dateSuggestionRowVisible
+              : scheduleShellTallForDateSuggestion
                 ? COLLAPSED_HEIGHT + 56 // Add space for suggestion row
                 : COLLAPSED_HEIGHT,
           width: shellTargetWidth,
         }}
-        transition={shellTransition}
+        transition={shellMotionTransition}
         onAnimationComplete={handleShellAnimationComplete}
       >
         {/* Expanded content */}
@@ -725,13 +926,15 @@ export function CommandBar({
             className="relative shrink-0 overflow-hidden"
             style={{
               height: COLLAPSED_HEIGHT,
-              opacity: dateSearchMode ? 0 : 1,
-              pointerEvents: dateSearchMode ? "none" : "auto",
-              ...scheduleDateFaceOpacityStyle,
+              ...idleScheduleFaceStyle,
+              pointerEvents:
+                dateSearchMode || dateSearchExitPhase === "filled-exit-morph"
+                  ? "none"
+                  : "auto",
             }}
             initial={false}
             animate={{ width: collapsedStripTargetWidth }}
-            transition={collapsedStripMotionTransition}
+            transition={collapsedStripMotionTransitionResolved}
           >
             <div
               ref={idleStripMeasureRef}
@@ -879,11 +1082,10 @@ export function CommandBar({
             className="absolute left-0 top-0 flex w-max max-w-[calc(100vw-2rem)] flex-col"
             style={{
               minHeight: COLLAPSED_HEIGHT,
-              opacity: dateSearchMode ? 1 : 0,
               pointerEvents: dateSearchMode ? "auto" : "none",
-              ...scheduleDateFaceOpacityStyle,
+              ...dateSearchFaceStyle,
             }}
-            aria-hidden={!dateSearchMode}
+            aria-hidden={!dateSearchStripSemanticallyVisible}
           >
             {/* Input row */}
             <div className="flex items-center gap-3 px-4" style={{ height: COLLAPSED_HEIGHT }}>
@@ -911,7 +1113,7 @@ export function CommandBar({
                   <button
                     type="button"
                     onClick={confirmGoToDate}
-                    className="group w-full rounded-lg border border-transparent px-3 py-2 text-left text-sm font-medium text-text-muted transition-all duration-200 ease-out hover:bg-background/50 hover:text-text active:scale-[0.995]"
+                    className="group w-full rounded-lg border border-transparent px-3 py-2 text-left text-sm font-medium text-text-muted transition-[opacity,transform,colors] duration-200 ease-out hover:bg-background/50 hover:text-text active:scale-[0.995]"
                   >
                     <span className="transition-colors duration-150 group-hover:text-text">
                       Go to {format(parsedDate, "MMMM d, yyyy")}

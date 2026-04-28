@@ -9,3 +9,10 @@ node_modules/
 .env*.local
 .DS_Store
 .vercel
+
+# Generated / local caches
+.pnpm-store/
+*.tsbuildinfo
+.turbo/
+out/
+dist/

@@ -13,6 +13,7 @@ import { User, CornerDownLeft, Tag } from "lucide-react"
 import { Calendar } from "@/components/ui/calendar"
 import { format, startOfDay } from "date-fns"
 import type { CanvasProject } from "./canvas-board"
+import { getDefaultDurationMinutes } from "@/lib/calendar-preferences"
 
 function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16)
@@ -167,7 +168,9 @@ export function TaskEditorPanel({
       }
     }
     const start = initialData?.startTimeMinutes ?? getDefaultStartMinutes()
-    const end = initialData?.endTimeMinutes ?? Math.min(start + 60, 24 * 60 - 15)
+    const end =
+      initialData?.endTimeMinutes ??
+      Math.min(start + getDefaultDurationMinutes(), 24 * 60 - 15)
     return {
       title: "",
       notes: "",

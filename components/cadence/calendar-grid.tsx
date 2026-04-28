@@ -29,6 +29,7 @@ import { PriorityIcon } from "@/components/cadence/sidebar"
 import { formatAssigneeLabel } from "@/components/cadence/assignee-utils"
 import type { TaskAssignee } from "@/components/cadence/task-editor-modal"
 import { cn } from "@/lib/utils"
+import { getDefaultDurationMinutes } from "@/lib/calendar-preferences"
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
@@ -631,7 +632,10 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
       const minutes = getMinutesFromY(e.clientY, dayIndex)
       isDragging.current = true
       setPointerPos({ x: e.clientX, y: e.clientY })
-      setDrag({ type: "create", dayIndex, anchorMinutes: minutes, currentMinutes: minutes + SNAP })
+      const span = getDefaultDurationMinutes()
+      const endCandidate = minutes + span
+      const currentMinutes = clampMinutes(Math.max(endCandidate, minutes + SNAP))
+      setDrag({ type: "create", dayIndex, anchorMinutes: minutes, currentMinutes })
     },
     [clearPopoverShowTimer, getMinutesFromY]
   )

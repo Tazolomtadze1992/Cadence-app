@@ -953,11 +953,21 @@ const PRIORITY_OPTIONS = [
   { value: "none", label: "None" },
 ]
 
-/** Task-actions side submenu: NavigationMenu-style clipped viewport + paired enter/exit (translateX only on inner). */
+/** Task-actions side submenu: clipped viewport + direction-aware paired enter/exit (`y` + opacity on inner). */
 const TASK_ACTIONS_SUBMENU_GAP = 6
-const TASK_ACTIONS_SUBMENU_CONTENT_MS = 150
-const TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS = 170
-const TASK_ACTIONS_SUBMENU_CONTENT_OFFSET_PX = 10
+/** Paired under `mode="sync"`: exit fast enough to lead, enter overlaps (delay 0) for one continuous morph. */
+const TASK_ACTIONS_SUBMENU_CONTENT_EXIT_MS = 100
+const TASK_ACTIONS_SUBMENU_CONTENT_ENTER_DELAY_MS = 0
+const TASK_ACTIONS_SUBMENU_CONTENT_ENTER_MS = 170
+/**
+ * Height + shell position/size morph: keep in sync with content tail
+ * `max(exit, enterDelay + enter)` so clipping doesn’t outlast the readable overlap window.
+ */
+const TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS = Math.max(
+  TASK_ACTIONS_SUBMENU_CONTENT_EXIT_MS,
+  TASK_ACTIONS_SUBMENU_CONTENT_ENTER_DELAY_MS + TASK_ACTIONS_SUBMENU_CONTENT_ENTER_MS
+)
+const TASK_ACTIONS_SUBMENU_CONTENT_TRANSLATE_PX = 22
 
 const TASK_SUBMENU_CONTENT_EASE = [...CADENCE_EASE_OUT] as [number, number, number, number]
 
@@ -979,42 +989,47 @@ function taskSubmenuAnimationOrder(key: string): number {
 function taskSubmenuInnerVariants(reduceMotion: boolean, offset: number): Variants {
   if (reduceMotion) {
     return {
-      initial: { opacity: 1, x: 0, zIndex: 2 },
-      animate: { opacity: 1, x: 0, zIndex: 2, transition: { duration: 0 } },
-      exit: { opacity: 1, x: 0, zIndex: 1, transition: { duration: 0 } },
+      initial: { opacity: 1, y: 0, zIndex: 2 },
+      animate: { opacity: 1, y: 0, zIndex: 2, transition: { duration: 0 } },
+      exit: { opacity: 1, y: 0, zIndex: 1, transition: { duration: 0 } },
     }
   }
-  const t = {
-    duration: TASK_ACTIONS_SUBMENU_CONTENT_MS / 1000,
+  const exitTransition = {
+    duration: TASK_ACTIONS_SUBMENU_CONTENT_EXIT_MS / 1000,
+    ease: TASK_SUBMENU_CONTENT_EASE,
+  }
+  const enterTransition = {
+    duration: TASK_ACTIONS_SUBMENU_CONTENT_ENTER_MS / 1000,
+    delay: TASK_ACTIONS_SUBMENU_CONTENT_ENTER_DELAY_MS / 1000,
     ease: TASK_SUBMENU_CONTENT_EASE,
   }
   return {
     initial: (dir: number) => ({
       opacity: 0,
-      x: dir * offset,
+      y: dir * offset,
       zIndex: 2,
       pointerEvents: "auto" as const,
     }),
     animate: {
       opacity: 1,
-      x: 0,
+      y: 0,
       zIndex: 2,
       pointerEvents: "auto" as const,
-      transition: t,
+      transition: enterTransition,
     },
     exit: (dir: number) => ({
       opacity: 0,
-      x: -dir * offset,
+      y: -dir * offset,
       zIndex: 1,
       pointerEvents: "none" as const,
-      transition: t,
+      transition: exitTransition,
     }),
   }
 }
 
 /**
  * Single portaled shell while `openSub` is set. Shell: floating-menu enter once + layout morph (top/left/width/height).
- * Inner: AnimatePresence pairs exit/enter on `animationKey` (translateX + opacity, no scale).
+ * Inner: AnimatePresence pairs exit/enter on `animationKey` (translateY + opacity, no scale).
  */
 function TaskActionsSubmenuShell({
   anchor,
@@ -1109,7 +1124,7 @@ function TaskActionsSubmenuShell({
   }, [measureViewport, animationKey])
 
   const innerVariants = useMemo(
-    () => taskSubmenuInnerVariants(reduceMotion, TASK_ACTIONS_SUBMENU_CONTENT_OFFSET_PX),
+    () => taskSubmenuInnerVariants(reduceMotion, TASK_ACTIONS_SUBMENU_CONTENT_TRANSLATE_PX),
     [reduceMotion]
   )
 

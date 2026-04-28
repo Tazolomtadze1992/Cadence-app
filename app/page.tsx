@@ -22,6 +22,7 @@ import { CanvasBoard, type CanvasItem, type CanvasProject } from "@/components/c
 import { CanvasSidebar } from "../components/cadence/canvas-sidebar"
 import { SEED_TAGS } from "@/components/cadence/task-editor-modal"
 import { cn } from "@/lib/utils"
+import { getDefaultEventColor } from "@/lib/calendar-preferences"
 import {
   getVisibleAllTabTaskOrder,
   getVisibleCompletedTabTaskOrder,
@@ -844,7 +845,7 @@ export default function CadenceApp() {
               projectId: data.projectId,
               // keep legacy tag visuals in sync with projects for now
               tag: project?.name ?? t.tag,
-              tagColor: project?.color ?? t.tagColor,
+              tagColor: project?.color ?? getDefaultEventColor() ?? t.tagColor,
               priority: data.priority,
               notes: data.notes,
               assignee: data.assignee,
@@ -881,7 +882,7 @@ export default function CadenceApp() {
         title: data.title || "New Task",
         projectId: data.projectId,
         tag: project?.name ?? "Daily Banking",
-        tagColor: project?.color ?? "#94a3b8",
+        tagColor: project?.color ?? getDefaultEventColor() ?? "#94a3b8",
         priority: data.priority,
         notes: data.notes ?? "",
         assignee: data.assignee ?? "",
