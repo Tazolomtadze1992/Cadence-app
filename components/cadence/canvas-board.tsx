@@ -505,15 +505,12 @@ export function CanvasBoard({
       <div
         key={item.id}
         data-canvas-item="image"
-        className="group absolute cursor-grab select-none overflow-visible active:cursor-grabbing outline-none focus:outline-none"
+        className="group absolute cursor-grab select-none overflow-visible active:cursor-grabbing outline-none focus:outline-none focus-visible:outline-none ring-0"
         style={{ ...baseStyle, height: itemHeight }}
         onPointerDown={(e) => handlePointerDown(e, item)}
       >
         <div
-          className={cn(
-            "relative h-full w-full overflow-hidden rounded-[8px]",
-            isSelected && "ring-1 ring-app-faint/70"
-          )}
+          className="relative h-full w-full overflow-hidden rounded-[8px]"
           onMouseEnter={() => setHoveredId(item.id)}
           onMouseLeave={() => {
             setHoveredId((current) => (current === item.id ? null : current))
@@ -522,7 +519,7 @@ export function CanvasBoard({
           <img
             src={item.src}
             alt={item.alt ?? ""}
-            className="h-full w-full object-cover"
+            className="h-full w-full object-cover outline-none [-webkit-user-drag:none]"
             draggable={false}
             onLoad={(e) => handleImageLoad(item, e.currentTarget)}
           />
