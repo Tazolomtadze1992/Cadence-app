@@ -45,7 +45,7 @@ const DEFAULT_NOTE_HEIGHT = 140
 const DEFAULT_IMAGE_WIDTH = 260
 const DEFAULT_IMAGE_HEIGHT = 220
 /** Floating trash / resize controls sit this many pixels outside the image frame (top-right and bottom-right). */
-const CANVAS_IMAGE_CONTROL_OUTSET_PX = 18
+const CANVAS_IMAGE_CONTROL_OUTSET_PX = 24
 const MIN_IMAGE_WIDTH = 160
 
 interface CanvasBoardProps {
@@ -268,6 +268,27 @@ export function CanvasBoard({
     if (resize?.itemId === itemId) setResize(null)
   }
 
+  const handleImageLoad = (item: CanvasItem & { type: "image" }, image: HTMLImageElement) => {
+    if (!project || !onResizeImage) return
+
+    const naturalWidth = image.naturalWidth
+    const naturalHeight = image.naturalHeight
+    if (!naturalWidth || !naturalHeight) return
+
+    const currentWidth = item.width ?? DEFAULT_IMAGE_WIDTH
+    const currentHeight = item.height ?? DEFAULT_IMAGE_HEIGHT
+
+    const naturalRatio = naturalHeight / naturalWidth
+    const currentRatio = currentHeight / currentWidth
+    if (!Number.isFinite(naturalRatio) || !Number.isFinite(currentRatio)) return
+    if (Math.abs(currentRatio - naturalRatio) <= 0.01) return
+
+    const nextHeight = Math.round(currentWidth * naturalRatio)
+    if (!Number.isFinite(nextHeight) || nextHeight <= 0) return
+
+    onResizeImage(project.id, item.id, currentWidth, nextHeight)
+  }
+
 
   const handleEditKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
     if (e.key === "Escape") {
@@ -355,10 +376,12 @@ export function CanvasBoard({
   }, [resize, project, onResizeImage])
 
   const renderItem = (item: CanvasItem) => {
+    const { width: itemWidth, height: itemHeight } = getItemSize(item)
+
     const baseStyle: CSSProperties = {
       left: item.x,
       top: item.y,
-      width: item.width ?? DEFAULT_NOTE_WIDTH,
+      width: itemWidth,
       zIndex: item.zIndex ?? 0,
     }
 
@@ -483,13 +506,13 @@ export function CanvasBoard({
         key={item.id}
         data-canvas-item="image"
         className="group absolute cursor-grab select-none overflow-visible active:cursor-grabbing outline-none focus:outline-none"
-        style={{ ...baseStyle, height: item.height ?? DEFAULT_IMAGE_HEIGHT }}
+        style={{ ...baseStyle, height: itemHeight }}
         onPointerDown={(e) => handlePointerDown(e, item)}
       >
         <div
           className={cn(
-            "relative h-full w-full overflow-hidden rounded-3xl border border-surface-3/40 bg-surface/80 shadow-[0_1px_5px_rgba(0,0,0,0.08)]",
-            isSelected && "border-app-faint/70 shadow-[0_2px_8px_rgba(0,0,0,0.10)]"
+            "relative h-full w-full overflow-hidden rounded-[8px]",
+            isSelected && "ring-1 ring-app-faint/70"
           )}
           onMouseEnter={() => setHoveredId(item.id)}
           onMouseLeave={() => {
@@ -501,6 +524,7 @@ export function CanvasBoard({
             alt={item.alt ?? ""}
             className="h-full w-full object-cover"
             draggable={false}
+            onLoad={(e) => handleImageLoad(item, e.currentTarget)}
           />
         </div>
         <div
@@ -540,29 +564,42 @@ export function CanvasBoard({
           const arcSize = 36
           const arcR = 24
           return (
-            <div
-              className="pointer-events-auto absolute cursor-se-resize"
-              style={{
-                bottom: -CANVAS_IMAGE_CONTROL_OUTSET_PX,
-                right: -CANVAS_IMAGE_CONTROL_OUTSET_PX,
-                width: arcSize,
-                height: arcSize,
-              }}
-              onPointerDown={(e) => {
-                if (e.button !== 0) return
-                e.stopPropagation()
-                e.preventDefault()
-                const { width, height } = getItemSize(item)
-                setResize({
-                  itemId: item.id,
-                  startWidth: width,
-                  startHeight: height,
-                  startX: e.clientX,
-                  startY: e.clientY,
-                })
-              }}
-              aria-label="Resize image"
-            >
+            <>
+              {(isSelected || isHovered) && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-auto absolute z-10 h-10 w-10"
+                  style={{
+                    bottom: -CANVAS_IMAGE_CONTROL_OUTSET_PX,
+                    right: -CANVAS_IMAGE_CONTROL_OUTSET_PX,
+                  }}
+                  onMouseEnter={() => setHoveredId(item.id)}
+                />
+              )}
+              <div
+                className="pointer-events-auto absolute z-20 cursor-se-resize"
+                style={{
+                  bottom: -CANVAS_IMAGE_CONTROL_OUTSET_PX,
+                  right: -CANVAS_IMAGE_CONTROL_OUTSET_PX,
+                  width: arcSize,
+                  height: arcSize,
+                }}
+                onMouseEnter={() => setHoveredId(item.id)}
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return
+                  e.stopPropagation()
+                  e.preventDefault()
+                  const { width, height } = getItemSize(item)
+                  setResize({
+                    itemId: item.id,
+                    startWidth: width,
+                    startHeight: height,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                  })
+                }}
+                aria-label="Resize image"
+              >
               <svg
                 width={arcSize}
                 height={arcSize}
@@ -580,6 +617,7 @@ export function CanvasBoard({
                 />
               </svg>
             </div>
+            </>
           )
         })()}
       </div>
