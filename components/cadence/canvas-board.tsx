@@ -44,6 +44,8 @@ const DEFAULT_NOTE_HEIGHT = 140
 
 const DEFAULT_IMAGE_WIDTH = 260
 const DEFAULT_IMAGE_HEIGHT = 220
+/** Floating trash / resize controls sit this many pixels outside the image frame (top-right and bottom-right). */
+const CANVAS_IMAGE_CONTROL_OUTSET_PX = 18
 const MIN_IMAGE_WIDTH = 160
 
 interface CanvasBoardProps {
@@ -480,13 +482,13 @@ export function CanvasBoard({
       <div
         key={item.id}
         data-canvas-item="image"
-        className="group absolute cursor-grab select-none active:cursor-grabbing outline-none focus:outline-none"
+        className="group absolute cursor-grab select-none overflow-visible active:cursor-grabbing outline-none focus:outline-none"
         style={{ ...baseStyle, height: item.height ?? DEFAULT_IMAGE_HEIGHT }}
         onPointerDown={(e) => handlePointerDown(e, item)}
       >
         <div
           className={cn(
-            "relative overflow-hidden rounded-3xl border border-surface-3/40 bg-surface/80 shadow-[0_1px_5px_rgba(0,0,0,0.08)]",
+            "relative h-full w-full overflow-hidden rounded-3xl border border-surface-3/40 bg-surface/80 shadow-[0_1px_5px_rgba(0,0,0,0.08)]",
             isSelected && "border-app-faint/70 shadow-[0_2px_8px_rgba(0,0,0,0.10)]"
           )}
           onMouseEnter={() => setHoveredId(item.id)}
@@ -500,24 +502,52 @@ export function CanvasBoard({
             className="h-full w-full object-cover"
             draggable={false}
           />
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleDeleteItem(item.id)
-            }}
-            className="pointer-events-auto absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md bg-black/30 text-red-400 opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-300"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-          {(() => {
-            const isHovered = hoveredId === item.id
-            const isResizing = resize?.itemId === item.id
-            const showResizeHandle = isHovered || isSelected || isResizing
-            if (!showResizeHandle) return null
-            return (
+        </div>
+        <div
+          aria-hidden="true"
+          className="pointer-events-auto absolute z-10 opacity-0"
+          style={{
+            top: -42,
+            right: -8,
+            width: 56,
+            height: 52,
+          }}
+        />
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            handleDeleteItem(item.id)
+          }}
+          aria-label="Delete image"
+          className={cn(
+            "pointer-events-auto absolute z-20 flex h-7 w-7 items-center justify-center rounded-lg bg-black/30 text-red-400 shadow-sm",
+            "opacity-0 transition-opacity duration-150 group-hover:opacity-100",
+            "hover:bg-red-500/20 hover:text-red-300"
+          )}
+          style={{
+            top: -36,
+            right: 0,
+          }}
+        >
+          <Trash2 className="h-4 w-4" aria-hidden />
+        </button>
+        {(() => {
+          const isHovered = hoveredId === item.id
+          const isResizing = resize?.itemId === item.id
+          const showResizeHandle = isHovered || isSelected || isResizing
+          if (!showResizeHandle) return null
+          const arcSize = 36
+          const arcR = 24
+          return (
             <div
-              className="pointer-events-auto absolute bottom-1.5 right-1.5 h-3.5 w-3.5 rounded-[4px] border border-white/60 bg-black/40 cursor-se-resize"
+              className="pointer-events-auto absolute cursor-se-resize"
+              style={{
+                bottom: -CANVAS_IMAGE_CONTROL_OUTSET_PX,
+                right: -CANVAS_IMAGE_CONTROL_OUTSET_PX,
+                width: arcSize,
+                height: arcSize,
+              }}
               onPointerDown={(e) => {
                 if (e.button !== 0) return
                 e.stopPropagation()
@@ -531,10 +561,27 @@ export function CanvasBoard({
                   startY: e.clientY,
                 })
               }}
-            />
-            )
-          })()}
-        </div>
+              aria-label="Resize image"
+            >
+              <svg
+                width={arcSize}
+                height={arcSize}
+                viewBox={`0 0 ${arcSize} ${arcSize}`}
+                className="pointer-events-none rotate-180 text-border/80"
+                aria-hidden
+              >
+                {/* Quarter-circle around the canvas corner; center (24,24), radius 13. */}
+                <path
+                  d={`M ${arcSize - arcR} ${arcSize} A ${arcR} ${arcR} 0 0 1 ${arcSize} ${arcSize - arcR}`}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                />
+              </svg>
+            </div>
+          )
+        })()}
       </div>
     )
   }
