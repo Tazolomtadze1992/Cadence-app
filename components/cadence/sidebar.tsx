@@ -384,7 +384,7 @@ export function AppSidebar({
             >
               {/* All/Completed tabs */}
               <SidebarCollapseRegion expanded={sidebarExpanded} className="shrink-0 px-3 pb-2">
-                <div className="flex rounded-[8px] bg-calendar-bg p-1">
+                <div className="flex rounded-[8px] bg-calendar-bg p-0.5">
                   {(
                     [
                       { value: "all" as const, label: "All" },
