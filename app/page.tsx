@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useMemo, useEffect, type MouseEvent as ReactMouseEvent } from "react"
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
+import { motion, AnimatePresence, MotionConfig, useReducedMotion } from "framer-motion"
 import {
   startOfWeek,
   addDays,
@@ -28,8 +28,11 @@ import {
   getVisibleCompletedTabTaskOrder,
 } from "@/components/cadence/sidebar-visible-order"
 import {
-  SIDEBAR_PANEL_SLIDE_VARIANTS,
-  sidebarPanelSlideTransition,
+  emilSidebarPanelProps,
+  emilSidebarTransition,
+  SIDEBAR_SHELL_DURATION_MS,
+  SIDEBAR_SHELL_EASE_CSS,
+  SIDEBAR_WIDTH_PX,
 } from "@/lib/cadence-motion"
 import type { DragCreatePayload, EventMovePayload, EventResizePayload, SidebarTaskDropPayload } from "@/components/cadence/calendar-grid"
 import type {
@@ -226,11 +229,17 @@ export default function CadenceApp() {
   } | null>(null)
   const [sidebarSelectedTaskIds, setSidebarSelectedTaskIds] = useState<string[]>([])
   const [sidebarSelectionAnchorId, setSidebarSelectionAnchorId] = useState<string | null>(null)
-  /** Schedule ↔ Canvas sidebar body: 1 = canvas enters from right; -1 = schedule enters from left. */
-  const [scheduleCanvasSlideDirection, setScheduleCanvasSlideDirection] = useState<1 | -1>(1)
   const shouldReduceMotion = useReducedMotion()
-  const scheduleCanvasSlideTransition = useMemo(
-    () => sidebarPanelSlideTransition(shouldReduceMotion),
+  const emilTransition = useMemo(
+    () => emilSidebarTransition(shouldReduceMotion),
+    [shouldReduceMotion]
+  )
+  const scheduleSidebarPanelProps = useMemo(
+    () => emilSidebarPanelProps("left", shouldReduceMotion),
+    [shouldReduceMotion]
+  )
+  const canvasSidebarPanelProps = useMemo(
+    () => emilSidebarPanelProps("right", shouldReduceMotion),
     [shouldReduceMotion]
   )
 
@@ -558,16 +567,10 @@ export default function CadenceApp() {
     (view: "tasks" | "agenda" | "canvas") => {
       if (view === "canvas") {
         clearSidebarTaskSelection()
-        setAppMode((prev) => {
-          if (prev !== "canvas") setScheduleCanvasSlideDirection(1)
-          return "canvas"
-        })
+        setAppMode("canvas")
         return
       }
-      setAppMode((prev) => {
-        if (prev === "canvas") setScheduleCanvasSlideDirection(-1)
-        return "schedule"
-      })
+      setAppMode("schedule")
       setSidebarView(view)
     },
     [clearSidebarTaskSelection]
@@ -594,25 +597,16 @@ export default function CadenceApp() {
 
       if (e.key === "t" || e.key === "T") {
         e.preventDefault()
-        setAppMode((prev) => {
-          if (prev === "canvas") setScheduleCanvasSlideDirection(-1)
-          return "schedule"
-        })
+        setAppMode("schedule")
         setSidebarView("tasks")
       } else if (e.key === "a" || e.key === "A") {
         e.preventDefault()
-        setAppMode((prev) => {
-          if (prev === "canvas") setScheduleCanvasSlideDirection(-1)
-          return "schedule"
-        })
+        setAppMode("schedule")
         setSidebarView("agenda")
       } else if (e.key === "c" || e.key === "C") {
         e.preventDefault()
         clearSidebarTaskSelection()
-        setAppMode((prev) => {
-          if (prev !== "canvas") setScheduleCanvasSlideDirection(1)
-          return "canvas"
-        })
+        setAppMode("canvas")
       }
     }
     window.addEventListener("keydown", onKeyDown)
@@ -1095,25 +1089,31 @@ export default function CadenceApp() {
       <div className="flex flex-1 min-h-0">
         <aside
           className={cn(
-            "flex h-full shrink-0 flex-col overflow-hidden bg-background transition-[width,opacity] duration-200 ease-out",
-            sidebarCollapsed ? "w-0 opacity-0" : "w-[260px] opacity-100"
+            "relative z-10 h-full shrink-0 min-w-0 overflow-hidden bg-background transition-[width] motion-reduce:transition-none",
+            sidebarCollapsed && "pointer-events-none"
           )}
+          style={{
+            width: sidebarCollapsed ? 0 : SIDEBAR_WIDTH_PX,
+            transitionDuration: shouldReduceMotion ? "0ms" : `${SIDEBAR_SHELL_DURATION_MS}ms`,
+            transitionTimingFunction: SIDEBAR_SHELL_EASE_CSS,
+          }}
+          aria-hidden={sidebarCollapsed}
+          {...(sidebarCollapsed ? { inert: true } : {})}
         >
+          <div
+            className="flex h-full shrink-0 flex-col bg-background"
+            style={{
+              width: SIDEBAR_WIDTH_PX,
+              minWidth: SIDEBAR_WIDTH_PX,
+            }}
+          >
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            <AnimatePresence
-              initial={false}
-              custom={scheduleCanvasSlideDirection}
-              mode="popLayout"
-            >
+            <MotionConfig transition={emilTransition}>
+            <AnimatePresence initial={false} mode="popLayout">
               {appMode === "schedule" ? (
                 <motion.div
                   key="sidebar-schedule"
-                  custom={scheduleCanvasSlideDirection}
-                  variants={SIDEBAR_PANEL_SLIDE_VARIANTS}
-                  initial="enter"
-                  animate="center"
-                  exit="exit"
-                  transition={scheduleCanvasSlideTransition}
+                  {...scheduleSidebarPanelProps}
                   className="absolute inset-0 flex flex-col overflow-hidden"
                 >
                   <AppSidebar
@@ -1138,12 +1138,7 @@ export default function CadenceApp() {
               ) : (
                 <motion.div
                   key="sidebar-canvas"
-                  custom={scheduleCanvasSlideDirection}
-                  variants={SIDEBAR_PANEL_SLIDE_VARIANTS}
-                  initial="enter"
-                  animate="center"
-                  exit="exit"
-                  transition={scheduleCanvasSlideTransition}
+                  {...canvasSidebarPanelProps}
                   className="absolute inset-0 flex flex-col overflow-hidden"
                 >
                   <CanvasSidebar
@@ -1158,15 +1153,27 @@ export default function CadenceApp() {
                 </motion.div>
               )}
             </AnimatePresence>
+            </MotionConfig>
           </div>
           <SidebarModeRail
+            collapsed={sidebarCollapsed}
             appMode={appMode}
             sidebarView={sidebarView}
             onSidebarModeClick={handleSidebarModeClick}
           />
+          </div>
         </aside>
 
-        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-tl-lg bg-calendar-bg shadow-[0_10px_15px_-3px_rgba(0,0,0,0.1),0_4px_6px_-4px_rgba(0,0,0,0.1)]">
+        <div
+          className={cn(
+            "relative z-0 isolate flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-tl-lg bg-calendar-bg shadow-[0_10px_15px_-3px_rgba(0,0,0,0.1),0_4px_6px_-4px_rgba(0,0,0,0.1)] transition-[margin-left] motion-reduce:transition-none",
+            sidebarCollapsed ? "ml-2" : "ml-0"
+          )}
+          style={{
+            transitionDuration: shouldReduceMotion ? "0ms" : `${SIDEBAR_SHELL_DURATION_MS}ms`,
+            transitionTimingFunction: SIDEBAR_SHELL_EASE_CSS,
+          }}
+        >
           {appMode === "schedule" ? (
             <CalendarGrid
               onDragCreate={handleDragCreate}

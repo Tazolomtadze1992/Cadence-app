@@ -44,6 +44,10 @@ import {
   SHELL_OPEN_S,
 } from "@/lib/cadence-motion"
 import {
+  floatingMenuHiddenTransform,
+  scheduleFloatingMenuEnter,
+} from "@/components/cadence/floating-menu-portal"
+import {
   format,
   parse,
   addDays,
@@ -196,10 +200,7 @@ function BulkChooserPopover({
     setVisible(false)
   }, [onClose, reducedMotion])
 
-  useEffect(() => {
-    if (reducedMotion) setVisible(true)
-    else requestAnimationFrame(() => setVisible(true))
-  }, [reducedMotion])
+  useEffect(() => scheduleFloatingMenuEnter(setVisible, reducedMotion), [reducedMotion])
 
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
@@ -233,7 +234,7 @@ function BulkChooserPopover({
     : { left, top: posBelow }
 
   const transformOrigin = openUp ? "bottom left" : "top left"
-  const hiddenTransform = openUp ? "translateY(4px) scale(0.98)" : "translateY(-4px) scale(0.98)"
+  const hiddenTransform = floatingMenuHiddenTransform(openUp ? "up" : "down")
 
   return createPortal(
     <div
@@ -1069,7 +1070,7 @@ export function CommandBar({
               <button
                 type="button"
                 onClick={() => bulkFaceModel.onDelete()}
-                className="ml-auto flex shrink-0 items-center gap-0.5 rounded px-2 py-1 text-[11px] font-medium text-red-400 transition-colors hover:bg-red-500/10"
+                className="ml-auto flex shrink-0 items-center gap-0.5 rounded px-2 py-1 text-[11px] font-medium text-destructive-text transition-colors hover:bg-destructive/10"
               >
                 <Trash2 className="h-3 w-3" />
                 Delete
@@ -1113,7 +1114,7 @@ export function CommandBar({
                   <button
                     type="button"
                     onClick={confirmGoToDate}
-                    className="group w-full rounded-lg border border-transparent px-3 py-2 text-left text-sm font-medium text-text-muted transition-[opacity,transform,colors] duration-200 ease-out hover:bg-background/50 hover:text-text active:scale-[0.995]"
+                    className="group w-full rounded-lg border border-transparent px-3 py-2 text-left text-sm font-medium text-text-muted transition-[opacity,transform,background-color,color] duration-200 ease-out hover:bg-background/50 hover:text-text active:scale-[0.97]"
                   >
                     <span className="transition-colors duration-150 group-hover:text-text">
                       Go to {format(parsedDate, "MMMM d, yyyy")}

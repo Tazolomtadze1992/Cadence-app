@@ -52,6 +52,16 @@
   --cadence-ease-out: cubic-bezier(0.165, 0.84, 0.44, 1);
   --cadence-ease-slide: cubic-bezier(0.2, 0.8, 0.2, 1);
   --cadence-ease-modal: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Elevated surface depth — see make-interfaces-feel-better/surfaces.md */
+  --shadow-border:
+    0px 0px 0px 1px rgba(0, 0, 0, 0.06),
+    0px 1px 2px -1px rgba(0, 0, 0, 0.06),
+    0px 2px 4px 0px rgba(0, 0, 0, 0.04);
+  --shadow-border-hover:
+    0px 0px 0px 1px rgba(0, 0, 0, 0.08),
+    0px 1px 2px -1px rgba(0, 0, 0, 0.08),
+    0px 2px 4px 0px rgba(0, 0, 0, 0.06);
 }
 
 .dark {
@@ -66,11 +76,12 @@
   --secondary: #242829;
   --secondary-foreground: #e8e6e3;
   --muted: #2a2a2a;
-  --muted-foreground: #8a8a8a;
+  --muted-foreground: oklch(0.78 0 0);
   --accent: #2a2a2a;
   --accent-foreground: #e8e6e3;
   --destructive: #7f1d1d;
   --destructive-foreground: #fca5a5;
+  --destructive-text: oklch(0.69 0.19 12);
   --border: #303236;
   --input: #303236;
   --ring: #525252;
@@ -92,11 +103,14 @@
   --surface-2: #242829;
   --surface-3: #333333;
   --text: #fafafa;
-  --text-muted: #8a8a8a;
-  --text-faint: #8E8F90;
+  --text-muted: oklch(0.78 0 0);
+  --text-faint: oklch(0.70 0 0);
   --app-accent: #FF6800;
   --app-accent-foreground: #ffffff;
   --calendar-bg: #1E2021;
+
+  --shadow-border: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-border-hover: 0 0 0 1px rgba(255, 255, 255, 0.13);
 }
 
 @theme inline {
@@ -118,6 +132,7 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-text: var(--destructive-text);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);

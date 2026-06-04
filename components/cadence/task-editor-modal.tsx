@@ -1,14 +1,17 @@
 "use client"
 
-import React, { useEffect, useRef, useState, useCallback } from "react"
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react"
 import { createPortal } from "react-dom"
 import { useReducedMotion } from "framer-motion"
 import { cn } from "@/lib/utils"
 import {
-  FLOATING_MENU_CLOSE_MS,
-  FLOATING_MENU_EASE_CSS,
-  FLOATING_MENU_OPEN_MS,
-} from "@/lib/cadence-motion"
+  TASK_EDITOR_DROPDOWN_EXIT_UNMOUNT_FALLBACK_MS,
+  floatingMenuTransformOrigin,
+  getTaskEditorDropdownSurfaceStyle,
+  handleFloatingMenuExitTransitionEnd,
+  scheduleTaskEditorDropdownEnter,
+  type FloatingMenuDirection,
+} from "@/components/cadence/floating-menu-portal"
 import { User, CornerDownLeft, Tag } from "lucide-react"
 import { Calendar } from "@/components/ui/calendar"
 import { format, startOfDay } from "date-fns"
@@ -59,6 +62,9 @@ const quickWhenOptions = [
 ] as const
 
 const PICK_DATE_ICON = "/icons/due-soon.svg"
+
+/** p-1 DropdownField / tag portal rows: rounded-lg nests inside rounded-xl shell. */
+const DROPDOWN_MENU_ROW_ROUNDED = "rounded-lg"
 
 export const priorityOptions = [
   { value: "high", label: "High", icon: "high.svg" },
@@ -324,8 +330,8 @@ export function TaskEditorPanel({
             id="schedule"
             activeDropdown={activeDropdown}
             setActiveDropdown={setActiveDropdown}
-            openUp
             layoutKey={schedulePanelView}
+            expectedHeight={schedulePanelView === "calendar" ? 260 : 112}
             panelClassName={
               schedulePanelView === "calendar"
                 ? "min-w-[236px] max-w-[min(296px,calc(100vw-2rem))] p-1.5"
@@ -406,7 +412,10 @@ export function TaskEditorPanel({
                       })
                       setActiveDropdown(null)
                     }}
-                    className="flex w-full items-center gap-2.5 rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
+                    className={cn(
+                      "flex w-full items-center gap-2.5 px-3 py-2 text-xs transition-colors hover:bg-surface-2",
+                      DROPDOWN_MENU_ROW_ROUNDED
+                    )}
                   >
                     <IconImg src={`/icons/${option.icon}`} />
                     <span className="text-text">{option.label}</span>
@@ -431,7 +440,10 @@ export function TaskEditorPanel({
                     e.stopPropagation()
                     setSchedulePanelView("calendar")
                   }}
-                  className="flex w-full items-center gap-2.5 rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
+                  className={cn(
+                    "flex w-full items-center gap-2.5 px-3 py-2 text-xs transition-colors hover:bg-surface-2",
+                    DROPDOWN_MENU_ROW_ROUNDED
+                  )}
                 >
                   <IconImg src={PICK_DATE_ICON} />
                   <span
@@ -466,7 +478,7 @@ export function TaskEditorPanel({
             id="project"
             activeDropdown={activeDropdown}
             setActiveDropdown={setActiveDropdown}
-            openUp
+            expectedHeight={Math.min(260, Math.max(112, projects.length * 34 + 10))}
             trigger={
               <div className="group flex items-center gap-2">
                 <span
@@ -486,7 +498,10 @@ export function TaskEditorPanel({
                     setTask({ ...task, projectId: p.id })
                     setActiveDropdown(null)
                   }}
-                  className="flex w-full items-center gap-2.5 rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
+                  className={cn(
+                    "flex w-full items-center gap-2.5 px-3 py-2 text-xs transition-colors hover:bg-surface-2",
+                    DROPDOWN_MENU_ROW_ROUNDED
+                  )}
                 >
                   <span
                     className="h-2.5 w-2.5 rounded-full"
@@ -518,7 +533,7 @@ export function TaskEditorPanel({
             id="priority"
             activeDropdown={activeDropdown}
             setActiveDropdown={setActiveDropdown}
-            openUp
+            expectedHeight={146}
             trigger={
               <div className="group flex items-center gap-2">
                 <IconImg src={`/icons/${selectedPriority.icon}`} />
@@ -534,7 +549,10 @@ export function TaskEditorPanel({
                   setTask({ ...task, priority: option.value })
                   setActiveDropdown(null)
                 }}
-                className="flex w-full items-center gap-2.5 rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
+                className={cn(
+                  "flex w-full items-center gap-2.5 px-3 py-2 text-xs transition-colors hover:bg-surface-2",
+                  DROPDOWN_MENU_ROW_ROUNDED
+                )}
               >
                 <IconImg src={`/icons/${option.icon}`} />
                 <span className="text-text">{option.label}</span>
@@ -562,7 +580,7 @@ export function TaskEditorPanel({
             id="assignee"
             activeDropdown={activeDropdown}
             setActiveDropdown={setActiveDropdown}
-            openUp
+            expectedHeight={112}
             trigger={
               <div className="group flex items-center gap-2">
                 <User className="h-4 w-4 shrink-0 text-text-faint" />
@@ -579,7 +597,10 @@ export function TaskEditorPanel({
                   setTask({ ...task, assignee: option.value })
                   setActiveDropdown(null)
                 }}
-                className="flex w-full items-center justify-between rounded px-3 py-2 text-xs transition-colors hover:bg-surface-2"
+                className={cn(
+                  "flex w-full items-center justify-between px-3 py-2 text-xs transition-colors hover:bg-surface-2",
+                  DROPDOWN_MENU_ROW_ROUNDED
+                )}
               >
                 <span className="text-text">{option.label}</span>
                 {task.assignee === option.value && (
@@ -607,7 +628,7 @@ export function TaskEditorPanel({
           {/* Discard button (4px radius) */}
           <button
             onClick={onClose}
-            className="flex items-center gap-1.5 rounded border border-border/50 bg-surface px-4 py-2 text-xs font-medium text-text shadow-sm transition-colors hover:bg-surface-2"
+            className="flex items-center gap-1.5 rounded border border-border/50 bg-surface px-4 py-2 text-xs font-medium text-text shadow-sm transition-[background-color,transform] duration-200 ease-out hover:bg-surface-2 active:scale-[0.97]"
           >
             Discard
             <kbd className="ml-1 rounded border border-border/50 bg-background/40 px-1.5 py-0.5 text-[10px] font-medium text-text-faint">
@@ -620,7 +641,7 @@ export function TaskEditorPanel({
             disabled={!canSubmit}
             onClick={submitTask}
             className={cn(
-              "flex items-center gap-1.5 rounded px-4 py-2 text-xs font-medium transition-all",
+              "flex items-center gap-1.5 rounded px-4 py-2 text-xs font-medium transition-[background-color,box-shadow,filter,transform] duration-200 ease-out active:scale-[0.97]",
               canSubmit
                 ? "bg-app-accent text-app-accent-foreground shadow-sm hover:brightness-110 hover:shadow-md"
                 : "cursor-not-allowed text-text-faint opacity-50"
@@ -718,16 +739,14 @@ function TagAutocomplete({
       setTagPos({ top: rect.bottom + 8, left: rect.left })
       setTagRenderPortal(true)
       tagExitHandledRef.current = false
-      if (reducedMotionTags) setTagVisible(true)
-      else requestAnimationFrame(() => setTagVisible(true))
+      return scheduleTaskEditorDropdownEnter(setTagVisible, reducedMotionTags)
+    }
+    if (reducedMotionTags) {
+      setTagVisible(false)
+      setTagRenderPortal(false)
+      setTagPos(null)
     } else {
-      if (reducedMotionTags) {
-        setTagVisible(false)
-        setTagRenderPortal(false)
-        setTagPos(null)
-      } else {
-        setTagVisible(false)
-      }
+      setTagVisible(false)
     }
   }, [suggestionsOpen, reducedMotionTags])
 
@@ -736,7 +755,7 @@ function TagAutocomplete({
     const t = window.setTimeout(() => {
       setTagRenderPortal(false)
       setTagPos(null)
-    }, FLOATING_MENU_CLOSE_MS + 100)
+    }, TASK_EDITOR_DROPDOWN_EXIT_UNMOUNT_FALLBACK_MS)
     return () => clearTimeout(t)
   }, [suggestionsOpen, tagVisible, tagRenderPortal, reducedMotionTags])
 
@@ -783,6 +802,14 @@ function TagAutocomplete({
   }
 
   const selectedTag = value ? tags.find((t) => t.name === value) : null
+  const tagMenuDirection: FloatingMenuDirection = "down"
+  const tagTransformOrigin = floatingMenuTransformOrigin(tagMenuDirection)
+  const tagSurfaceStyle = getTaskEditorDropdownSurfaceStyle({
+    visible: tagVisible,
+    direction: tagMenuDirection,
+    transformOrigin: tagTransformOrigin,
+    reduceMotion: reducedMotionTags,
+  })
 
   return (
     <div ref={containerRef} onClick={(e) => e.stopPropagation()}>
@@ -842,39 +869,33 @@ function TagAutocomplete({
         createPortal(
           <div
             className={cn(
-              "fixed z-[100] min-w-[200px] rounded-xl border border-border/50 bg-background p-1 shadow-lg",
+              "fixed z-[100] min-w-[200px] rounded-xl border border-border/50 bg-background p-1 shadow-lg motion-reduce:transition-none",
               reducedMotionTags && "transition-none"
             )}
             style={{
               top: tagPos.top,
               left: tagPos.left,
-              opacity: tagVisible ? 1 : 0,
-              transform: tagVisible
-                ? "translateY(0) scale(1)"
-                : "translateY(-4px) scale(0.98)",
-              transition: reducedMotionTags
-                ? "none"
-                : tagVisible
-                  ? `opacity ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}`
-                  : `opacity ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}`,
-              transformOrigin: "top left",
+              ...tagSurfaceStyle,
             }}
             onMouseDown={(e) => e.preventDefault()}
-            onTransitionEnd={(e) => {
-              if (e.propertyName !== "opacity" && e.propertyName !== "transform") return
-              if (tagExitHandledRef.current) return
-              if (suggestionsOpen || tagVisible) return
-              tagExitHandledRef.current = true
-              setTagRenderPortal(false)
-              setTagPos(null)
-            }}
+            onTransitionEnd={(e) =>
+              handleFloatingMenuExitTransitionEnd(e, {
+                exitHandledRef: tagExitHandledRef,
+                shouldStayMounted: suggestionsOpen || tagVisible,
+                onUnmount: () => {
+                  setTagRenderPortal(false)
+                  setTagPos(null)
+                },
+              })
+            }
           >
             {filtered.map((tag, i) => (
               <button
                 key={tag.name}
                 onClick={() => selectTag(tag.name)}
                 className={cn(
-                  "flex w-full items-center gap-2.5 rounded px-3 py-2 text-sm transition-colors",
+                  "flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors",
+                  DROPDOWN_MENU_ROW_ROUNDED,
                   highlightIndex === i ? "bg-surface-2" : "hover:bg-surface-2"
                 )}
               >
@@ -889,7 +910,8 @@ function TagAutocomplete({
               <button
                 onClick={createTag}
                 className={cn(
-                  "flex w-full items-center gap-2.5 rounded px-3 py-2 text-sm transition-colors",
+                  "flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors",
+                  DROPDOWN_MENU_ROW_ROUNDED,
                   highlightIndex === filtered.length
                     ? "bg-surface-2"
                     : "hover:bg-surface-2"
@@ -918,8 +940,8 @@ function DropdownField({
   setActiveDropdown,
   trigger,
   children,
-  openUp = false,
   layoutKey,
+  expectedHeight = 180,
   panelClassName,
 }: {
   id: string
@@ -927,61 +949,157 @@ function DropdownField({
   setActiveDropdown: (id: string | null) => void
   trigger: React.ReactNode
   children: React.ReactNode
-  openUp?: boolean
   /** When this changes while open, recomputes position (e.g. schedule list vs inline calendar). */
   layoutKey?: string
+  expectedHeight?: number
   panelClassName?: string
 }) {
   const isOpen = activeDropdown === id
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  const [placement, setPlacement] = useState<{
+    top?: number
+    bottom?: number
+    left: number
+    maxHeight: number
+    direction: FloatingMenuDirection
+  } | null>(null)
   const [visible, setVisible] = useState(false)
   const [renderPortal, setRenderPortal] = useState(false)
   const exitHandledRef = useRef(false)
+  const lockedDirectionRef = useRef<FloatingMenuDirection | null>(null)
+  const hasMeasuredRef = useRef(false)
+  const enterCleanupRef = useRef<(() => void) | null>(null)
+  const expectedHeightRef = useRef(expectedHeight)
+  expectedHeightRef.current = expectedHeight
   const reducedMotion = useReducedMotion() ?? false
 
-  const computePos = useCallback(() => {
+  const computePlacement = useCallback((surfaceRect?: DOMRect) => {
     if (!triggerRef.current) return
     const rect = triggerRef.current.getBoundingClientRect()
     const gap = 4
-    if (openUp) setPos({ top: rect.top - gap, left: rect.left })
-    else setPos({ top: rect.bottom + gap, left: rect.left })
-  }, [openUp])
+    const viewportMargin = 12
+    const menuHeight = surfaceRect?.height ?? expectedHeightRef.current
+    const menuWidth = surfaceRect?.width ?? 200
+    const availableBelow = Math.max(0, window.innerHeight - rect.bottom - gap - viewportMargin)
+    const availableAbove = Math.max(0, rect.top - gap - viewportMargin)
+    const bestDirection: FloatingMenuDirection =
+      availableBelow >= menuHeight
+        ? "down"
+        : availableAbove >= menuHeight
+          ? "up"
+          : availableBelow >= availableAbove
+            ? "down"
+            : "up"
 
+    let direction: FloatingMenuDirection
+    if (lockedDirectionRef.current != null) {
+      direction = lockedDirectionRef.current
+    } else if (surfaceRect) {
+      direction = bestDirection
+      lockedDirectionRef.current = bestDirection
+    } else {
+      direction = bestDirection
+    }
+
+    const available = direction === "down" ? availableBelow : availableAbove
+    const maxLeft = Math.max(viewportMargin, window.innerWidth - viewportMargin - menuWidth)
+    const left = Math.min(Math.max(viewportMargin, rect.left), maxLeft)
+
+    setPlacement({
+      ...(direction === "down"
+        ? { top: rect.bottom + gap }
+        : { bottom: window.innerHeight - rect.top + gap }),
+      left,
+      maxHeight: available,
+      direction,
+    })
+  }, [])
+
+  /** Open/close lifecycle only — do not reset visibility when layout/content changes while open. */
   useEffect(() => {
     if (isOpen) {
-      computePos()
-      setRenderPortal(true)
+      lockedDirectionRef.current = null
+      hasMeasuredRef.current = false
       exitHandledRef.current = false
-      if (reducedMotion) setVisible(true)
-      else requestAnimationFrame(() => setVisible(true))
-    } else {
-      if (reducedMotion) {
-        setVisible(false)
-        setRenderPortal(false)
-        setPos(null)
-      } else {
-        setVisible(false)
+      setVisible(false)
+      computePlacement()
+      setRenderPortal(true)
+      return () => {
+        enterCleanupRef.current?.()
+        enterCleanupRef.current = null
       }
     }
-  }, [isOpen, computePos, layoutKey, reducedMotion])
+    enterCleanupRef.current?.()
+    enterCleanupRef.current = null
+    lockedDirectionRef.current = null
+    hasMeasuredRef.current = false
+    if (reducedMotion) {
+      setVisible(false)
+      setRenderPortal(false)
+      setPlacement(null)
+    } else {
+      setVisible(false)
+    }
+  }, [isOpen, reducedMotion])
+
+  useLayoutEffect(() => {
+    if (!isOpen || !renderPortal || !surfaceRef.current) return
+
+    const measureAndPlace = () => {
+      if (!surfaceRef.current) return
+      computePlacement(surfaceRef.current.getBoundingClientRect())
+    }
+
+    measureAndPlace()
+
+    if (!hasMeasuredRef.current) {
+      hasMeasuredRef.current = true
+      if (reducedMotion) {
+        setVisible(true)
+      } else {
+        enterCleanupRef.current = scheduleTaskEditorDropdownEnter(setVisible, reducedMotion)
+      }
+    }
+
+    const observer = new ResizeObserver(measureAndPlace)
+    observer.observe(surfaceRef.current)
+    window.addEventListener("resize", measureAndPlace)
+    window.addEventListener("scroll", measureAndPlace, true)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener("resize", measureAndPlace)
+      window.removeEventListener("scroll", measureAndPlace, true)
+    }
+  }, [computePlacement, isOpen, layoutKey, renderPortal, reducedMotion])
 
   useEffect(() => {
     if (isOpen || visible || !renderPortal || reducedMotion) return
     const t = window.setTimeout(() => {
       setRenderPortal(false)
-      setPos(null)
-    }, FLOATING_MENU_CLOSE_MS + 100)
+      setPlacement(null)
+    }, TASK_EDITOR_DROPDOWN_EXIT_UNMOUNT_FALLBACK_MS)
     return () => clearTimeout(t)
   }, [isOpen, visible, renderPortal, reducedMotion])
 
+  const menuDirection: FloatingMenuDirection = placement?.direction ?? "down"
+  const transformOrigin = floatingMenuTransformOrigin(menuDirection)
+  const surfaceStyle = getTaskEditorDropdownSurfaceStyle({
+    visible,
+    direction: menuDirection,
+    transformOrigin,
+    reduceMotion: reducedMotion,
+  })
+
   function handlePanelTransitionEnd(e: React.TransitionEvent<HTMLDivElement>) {
-    if (e.propertyName !== "opacity" && e.propertyName !== "transform") return
-    if (exitHandledRef.current) return
-    if (isOpen || visible) return
-    exitHandledRef.current = true
-    setRenderPortal(false)
-    setPos(null)
+    handleFloatingMenuExitTransitionEnd(e, {
+      exitHandledRef,
+      shouldStayMounted: isOpen || visible,
+      onUnmount: () => {
+        setRenderPortal(false)
+        setPlacement(null)
+      },
+    })
   }
 
   return (
@@ -998,31 +1116,22 @@ function DropdownField({
       </button>
 
       {renderPortal &&
-        pos &&
+        placement &&
         createPortal(
           <div
+            ref={surfaceRef}
             className={cn(
-              "fixed z-[100] min-w-[200px] rounded-xl border border-border/50 bg-background p-1 shadow-lg",
+              "fixed z-[100] min-w-[200px] overflow-y-auto rounded-xl border border-border/50 bg-background p-1 shadow-lg motion-reduce:transition-none",
               reducedMotion && "transition-none",
               panelClassName
             )}
             style={{
-              left: pos.left,
-              ...(openUp
-                ? { bottom: `calc(100vh - ${pos.top}px)` }
-                : { top: pos.top }),
-              opacity: visible ? 1 : 0,
-              transform: visible
-                ? "translateY(0) scale(1)"
-                : openUp
-                  ? "translateY(4px) scale(0.98)"
-                  : "translateY(-4px) scale(0.98)",
-              transition: reducedMotion
-                ? "none"
-                : visible
-                  ? `opacity ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}`
-                  : `opacity ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}`,
-              transformOrigin: openUp ? "bottom left" : "top left",
+              ...(placement.direction === "down"
+                ? { top: placement.top }
+                : { bottom: placement.bottom }),
+              left: placement.left,
+              maxHeight: placement.maxHeight,
+              ...surfaceStyle,
             }}
             onClick={(e) => e.stopPropagation()}
             onTransitionEnd={handlePanelTransitionEnd}

@@ -10,11 +10,12 @@ import { ProjectItem } from "./project-item"
 import { AddProjectPopover } from "./add-project-popover"
 import { ProjectColorSwatchGrid, PROJECT_COLORS } from "./project-palette"
 import { SidebarDisclosure } from "@/components/cadence/sidebar-disclosure"
+import { SidebarCollapseLabel, SidebarCollapseRegion } from "@/components/cadence/sidebar-collapse-fade"
 import {
-  getFloatingMenuSurfaceStyle,
+  getContextMenuSurfaceStyle,
   useFloatingMenuEnterVisible,
-  useFloatingMenuRequestClose,
-  runAfterFloatingMenuExit,
+  useContextMenuRequestClose,
+  runAfterContextMenuExit,
 } from "@/components/cadence/floating-menu-portal"
 
 export { PROJECT_COLORS, ProjectColorSwatchGrid } from "./project-palette"
@@ -47,7 +48,6 @@ export function CanvasSidebar({
   onDeleteProject,
   onQuickAddTask,
 }: CanvasSidebarProps) {
-  const [contentVisible, setContentVisible] = useState(!collapsed)
   const [actionsDropdown, setActionsDropdown] = useState<{
     projectId: string
     anchor: { top: number; left: number; right: number; bottom: number }
@@ -62,12 +62,12 @@ export function CanvasSidebar({
   const [addProjectPos, setAddProjectPos] = useState<{ top: number; left: number } | null>(null)
 
   useEffect(() => {
-    if (!collapsed) {
-      const id = window.setTimeout(() => setContentVisible(true), 80)
-      return () => window.clearTimeout(id)
-    }
-    setContentVisible(false)
+    if (!collapsed) return
+    setActionsDropdown(null)
+    setAddProjectOpen(false)
   }, [collapsed])
+
+  const sidebarExpanded = !collapsed
 
   useEffect(() => {
     if (!renamingProjectId) return
@@ -98,11 +98,16 @@ export function CanvasSidebar({
   )
 
   return (
-    <div className="relative h-full min-h-0 w-full overflow-hidden">
+    <div
+      className="relative h-full min-h-0 w-full overflow-hidden"
+      aria-hidden={collapsed}
+    >
       <div className="relative h-full min-h-0 overflow-hidden">
-        {contentVisible && (
           <div className="flex h-full min-h-0 flex-col">
-            <div className="flex items-center gap-2 px-3 pt-0 pb-3">
+            <SidebarCollapseRegion
+              expanded={sidebarExpanded}
+              className="flex items-center gap-2 px-3 pt-0 pb-3"
+            >
               <div className="flex h-8 flex-1 items-center gap-2 rounded-md bg-surface-2/60 px-2.5 text-sm text-text transition-colors hover:bg-surface">
                 <Search className="h-4 w-4 text-text-muted" />
                 <input
@@ -113,11 +118,14 @@ export function CanvasSidebar({
                   className="w-full bg-transparent text-sm text-text outline-none placeholder:text-text-muted"
                 />
               </div>
-            </div>
+            </SidebarCollapseRegion>
 
-            <div className="flex-1 overflow-y-auto px-1.5 py-3">
+            <SidebarCollapseRegion
+              expanded={sidebarExpanded}
+              className="flex-1 overflow-y-auto px-1.5 py-3"
+            >
               {projects.length === 0 ? (
-                <div className="mt-6 px-3 text-xs text-text-muted">
+                <div className="mt-6 px-3 text-pretty text-xs text-text-muted">
                   No projects yet. Create one to start a canvas.
                 </div>
               ) : (
@@ -134,7 +142,12 @@ export function CanvasSidebar({
                           projectsOpen && "rotate-90"
                         )}
                       />
-                      Projects
+                      <SidebarCollapseLabel
+                        expanded={sidebarExpanded}
+                        className="text-[13px] font-medium text-text/60 transition-colors duration-[200ms] ease-[var(--cadence-ease-slide)] hover:text-text/90"
+                      >
+                        Projects
+                      </SidebarCollapseLabel>
                     </button>
                     {onAddProject && (
                       <button
@@ -167,6 +180,7 @@ export function CanvasSidebar({
                         <ProjectItem
                           key={project.id}
                           label={project.name}
+                          expanded={sidebarExpanded}
                           color={project.color}
                           hasChevron={false}
                           isActive={project.id === activeProjectId}
@@ -189,7 +203,7 @@ export function CanvasSidebar({
                   </SidebarDisclosure>
                 </>
               )}
-            </div>
+            </SidebarCollapseRegion>
 
             {onAddProject && addProjectOpen && addProjectPos && (
               <AddProjectPopover
@@ -225,7 +239,6 @@ export function CanvasSidebar({
               )
             })()}
           </div>
-        )}
       </div>
     </div>
   )
@@ -253,7 +266,7 @@ export function ProjectActionsDropdown({
   const reduceMotion = useReducedMotion() ?? false
   const [visible, setVisible] = useFloatingMenuEnterVisible(reduceMotion)
   const popoverRef = useRef<HTMLDivElement>(null)
-  const requestClose = useFloatingMenuRequestClose(onClose, setVisible, reduceMotion)
+  const requestClose = useContextMenuRequestClose(onClose, setVisible, reduceMotion)
 
   const fitsRight = anchor.right + GAP + DROPDOWN_WIDTH <= window.innerWidth - GAP
   const computedLeft = fitsRight ? anchor.right + GAP : anchor.left - DROPDOWN_WIDTH - GAP
@@ -284,11 +297,11 @@ export function ProjectActionsDropdown({
   return createPortal(
     <div
       ref={popoverRef}
-      className="fixed z-[100] w-fit rounded-xl border border-border/50 bg-background p-3 shadow-lg motion-reduce:transition-none will-change-transform will-change-opacity"
+      className="fixed z-[100] w-fit rounded-xl border border-border/50 bg-background p-3 shadow-lg motion-reduce:transition-none"
       style={{
         top: computedTop,
         left: computedLeft,
-        ...getFloatingMenuSurfaceStyle({ visible, transformOrigin: origin, reduceMotion }),
+        ...getContextMenuSurfaceStyle({ visible, transformOrigin: origin, reduceMotion }),
       }}
     >
       <div className="flex flex-col items-start">
@@ -305,12 +318,12 @@ export function ProjectActionsDropdown({
       <button
         type="button"
         onClick={() =>
-          runAfterFloatingMenuExit(reduceMotion, setVisible, () => {
+          runAfterContextMenuExit(reduceMotion, setVisible, () => {
             onRename()
             onClose()
           })
         }
-        className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1 text-xs text-text transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:bg-surface-2"
+        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1 text-xs text-text transition-[background-color,color] duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:bg-surface-2"
       >
         <Pencil className="h-3 w-3 text-text-muted" />
         Rename
@@ -321,16 +334,16 @@ export function ProjectActionsDropdown({
         disabled={deleteDisabled}
         onClick={() => {
           if (deleteDisabled) return
-          runAfterFloatingMenuExit(reduceMotion, setVisible, () => {
+          runAfterContextMenuExit(reduceMotion, setVisible, () => {
             onDelete()
             onClose()
           })
         }}
         className={cn(
-          "mt-0.5 flex w-full items-center gap-2.5 rounded-sm px-2 py-1 text-xs transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)]",
+          "mt-0.5 flex w-full items-center gap-2.5 rounded-lg px-2 py-1 text-xs transition-[background-color,color] duration-200 ease-[cubic-bezier(0.4,0,0.2,1)]",
           deleteDisabled
             ? "cursor-not-allowed text-text-faint opacity-60"
-            : "text-red-400 hover:bg-red-500/10"
+            : "text-destructive-text hover:bg-destructive/10"
         )}
       >
         <Trash2 className="h-3 w-3" />

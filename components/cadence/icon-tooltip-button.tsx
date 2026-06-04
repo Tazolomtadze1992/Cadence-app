@@ -369,6 +369,8 @@ interface IconTooltipButtonProps {
 
   // Optional: keep icon color primary even when inactive (useful for collapse button)
   alwaysPrimary?: boolean
+  /** When set, active bg uses a shared layoutId morph instead of static `bg-background`. */
+  sharedLayoutIndicatorId?: string
 }
 
 export function IconTooltipButton({
@@ -381,7 +383,11 @@ export function IconTooltipButton({
   tooltipAlign = "center",
   className,
   alwaysPrimary = false,
+  sharedLayoutIndicatorId,
 }: IconTooltipButtonProps) {
+  const shouldReduceMotion = useReducedMotion() ?? false
+  const useSharedIndicator = sharedLayoutIndicatorId != null
+
   return (
     <ShortcutHintWrap
       label={label}
@@ -391,22 +397,40 @@ export function IconTooltipButton({
     >
       {({ dismiss }) => (
         <button
+          type="button"
+          aria-pressed={useSharedIndicator ? isActive : undefined}
           onClick={() => {
             dismiss()
             onClick()
           }}
           className={cn(
-            "flex h-8 w-8 items-center justify-center rounded-sm transition-colors",
-            isActive
-              ? "bg-background text-primary"
-              : alwaysPrimary
-                ? "text-primary hover:bg-surface-2"
-                : "text-text-muted hover:text-text hover:bg-surface-2",
+            "relative flex h-8 w-8 items-center justify-center transition-colors after:absolute after:top-1/2 after:left-1/2 after:size-10 after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']",
+            useSharedIndicator ? "rounded-md" : "rounded-sm",
+            useSharedIndicator
+              ? isActive
+                ? "text-primary"
+                : "text-text-muted"
+              : isActive
+                ? "bg-background text-primary"
+                : alwaysPrimary
+                  ? "text-primary hover:bg-surface-2"
+                  : "text-text-muted hover:text-text hover:bg-surface-2",
             className
           )}
         >
+          {useSharedIndicator && isActive && (
+            <motion.div
+              layoutId={sharedLayoutIndicatorId}
+              className="absolute inset-0 rounded-md bg-background"
+              transition={
+                shouldReduceMotion
+                  ? { duration: 0 }
+                  : { type: "spring", duration: 0.2, bounce: 0 }
+              }
+            />
+          )}
           <span
-            className="block h-5 w-5"
+            className={cn("block h-5 w-5", useSharedIndicator && "relative z-10")}
             style={{
               backgroundColor: "currentColor",
               WebkitMaskImage: `url(${iconUrl})`,

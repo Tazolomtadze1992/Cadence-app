@@ -15,7 +15,7 @@ import {
 } from "react"
 import { createPortal } from "react-dom"
 import { format, startOfDay, addDays } from "date-fns"
-import { motion, AnimatePresence, useReducedMotion, type Variants } from "framer-motion"
+import { motion, AnimatePresence, MotionConfig, useReducedMotion, type Variants } from "framer-motion"
 import { cn } from "@/lib/utils"
 import {
   ChevronLeft,
@@ -45,18 +45,21 @@ import { IconTooltipButton } from "./icon-tooltip-button"
 import { ProjectActionsDropdown } from "./canvas-sidebar"
 import { ProjectItem } from "./project-item"
 import { AddProjectPopover } from "./add-project-popover"
+import { SidebarCollapseLabel, SidebarCollapseRegion } from "./sidebar-collapse-fade"
 import { bucketForSchedulePickedDate } from "./picked-due-bucket"
 import {
   CADENCE_EASE_OUT,
-  CADENCE_EASE_SLIDE_CSS,
-  SIDEBAR_PANEL_SLIDE_VARIANTS,
-  sidebarPanelSlideTransition,
+  CADENCE_EASE_OUT_CSS,
+  CONTEXT_MENU_CLOSE_MS,
+  CONTEXT_MENU_OPEN_MS,
+  emilSidebarPanelProps,
+  emilSidebarTransition,
 } from "@/lib/cadence-motion"
 import {
-  getFloatingMenuSurfaceStyle,
+  getContextMenuSurfaceStyle,
   useFloatingMenuEnterVisible,
-  useFloatingMenuRequestClose,
-  runAfterFloatingMenuExit,
+  useContextMenuRequestClose,
+  runAfterContextMenuExit,
 } from "@/components/cadence/floating-menu-portal"
 import { SidebarDisclosure } from "@/components/cadence/sidebar-disclosure"
 
@@ -137,9 +140,6 @@ export function AppSidebar({
   onSidebarTaskRowClick?: (taskId: string, e: ReactMouseEvent, tab: "all" | "completed") => void
   onSidebarTasksTabChange?: () => void
 }) {
-  const [slideDirection, setSlideDirection] = useState<1 | -1>(1)
-  /** All ↔ Completed: 1 = forward (Completed enters from right), -1 = back (All enters from left). */
-  const [tabSlideDirection, setTabSlideDirection] = useState<1 | -1>(1)
   const [activeTab, setActiveTab] = useState<"all" | "completed">("all")
   const [projectsOpen, setProjectsOpen] = useState(true)
 
@@ -333,17 +333,11 @@ export function AppSidebar({
     anchor: { top: number; left: number; right: number; bottom: number }
   } | null>(null)
 
-  // Slightly delay content mount on expand so width animation leads
-  const [contentVisible, setContentVisible] = useState(!collapsed)
-
   useEffect(() => {
-    if (!collapsed) {
-      // Wait a short moment so the width has started expanding before we show content
-      const id = window.setTimeout(() => setContentVisible(true), 80)
-      return () => window.clearTimeout(id)
-    }
-    // Hide content immediately when collapsing to avoid flicker
-    setContentVisible(false)
+    if (!collapsed) return
+    setTaskDropdown(null)
+    setAddProjectOpen(false)
+    setProjectActionsDropdown(null)
   }, [collapsed])
 
   const activeDropdownTask = useMemo(
@@ -351,92 +345,96 @@ export function AppSidebar({
     [taskDropdown, tasks]
   )
 
-  const switchToAgenda = useCallback(() => {
-    if (sidebarView === "agenda") return
-    setSlideDirection(1) // tasks slides left, agenda slides in from right
-    onSidebarModeClick("agenda")
-  }, [sidebarView, onSidebarModeClick])
-
-  const switchToTasks = useCallback(() => {
-    if (sidebarView === "tasks") return
-    setSlideDirection(-1) // agenda slides right, tasks slides in from left
-    onSidebarModeClick("tasks")
-  }, [sidebarView, onSidebarModeClick])
-
   const shouldReduceMotion = useReducedMotion()
-  const slideTransition = useMemo(
-    () => sidebarPanelSlideTransition(shouldReduceMotion),
+  const emilTransition = useMemo(
+    () => emilSidebarTransition(shouldReduceMotion),
     [shouldReduceMotion]
   )
+  const tasksPanelProps = useMemo(
+    () => emilSidebarPanelProps("left", shouldReduceMotion),
+    [shouldReduceMotion]
+  )
+  const agendaPanelProps = useMemo(
+    () => emilSidebarPanelProps("right", shouldReduceMotion),
+    [shouldReduceMotion]
+  )
+  const allTabPanelProps = useMemo(
+    () => emilSidebarPanelProps("left", shouldReduceMotion),
+    [shouldReduceMotion]
+  )
+  const completedTabPanelProps = useMemo(
+    () => emilSidebarPanelProps("right", shouldReduceMotion),
+    [shouldReduceMotion]
+  )
+  const sidebarExpanded = !collapsed
   return (
-    <div className="relative h-full min-h-0 w-full overflow-hidden">
+    <div
+      className="relative h-full min-h-0 w-full overflow-hidden"
+      aria-hidden={collapsed}
+    >
       {/* Animated content area */}
       <div className="relative h-full min-h-0 overflow-hidden">
-        {contentVisible && (
-        <AnimatePresence initial={false} custom={slideDirection} mode="popLayout">
+        <MotionConfig transition={emilTransition}>
+        <AnimatePresence initial={false} mode="popLayout">
           {sidebarView === "tasks" ? (
             <motion.div
               key="tasks"
-              custom={slideDirection}
-              variants={SIDEBAR_PANEL_SLIDE_VARIANTS}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={slideTransition}
+              {...tasksPanelProps}
               className="absolute inset-0 flex flex-col overflow-hidden"
             >
               {/* All/Completed tabs */}
-              <div className="shrink-0 px-3 pb-2">
-                <div className="flex rounded-md bg-surface-2 p-0.5">
-                  <button
-                    onClick={() => {
-                      if (activeTab === "all") return
-                      setTabSlideDirection(-1)
-                      setActiveTab("all")
-                      onSidebarTasksTabChange?.()
-                    }}
-                    className={cn(
-                      "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                      activeTab === "all" ? "bg-surface text-text shadow-sm" : "text-text-muted hover:text-text"
-                    )}
-                  >
-                    All
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (activeTab === "completed") return
-                      setTabSlideDirection(1)
-                      setActiveTab("completed")
-                      onSidebarTasksTabChange?.()
-                    }}
-                    className={cn(
-                      "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                      activeTab === "completed" ? "bg-surface text-text shadow-sm" : "text-text-muted hover:text-text"
-                    )}
-                  >
-                    Completed
-                  </button>
+              <SidebarCollapseRegion expanded={sidebarExpanded} className="shrink-0 px-3 pb-2">
+                <div className="flex rounded-[8px] bg-calendar-bg p-1">
+                  {(
+                    [
+                      { value: "all" as const, label: "All" },
+                      { value: "completed" as const, label: "Completed" },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.value}
+                      type="button"
+                      aria-pressed={activeTab === tab.value}
+                      onClick={() => {
+                        if (activeTab === tab.value) return
+                        setActiveTab(tab.value)
+                        onSidebarTasksTabChange?.()
+                      }}
+                      className={cn(
+                        "relative flex-1 rounded-[6px] px-3 py-1.5 text-xs font-medium transition-colors",
+                        activeTab === tab.value ? "text-text" : "text-text-muted"
+                      )}
+                    >
+                      {activeTab === tab.value && (
+                        <motion.div
+                          layoutId="task-filter-tab-indicator"
+                          className="absolute inset-0 rounded-[6px] bg-background"
+                          transition={
+                            shouldReduceMotion
+                              ? { duration: 0 }
+                              : { type: "spring", duration: 0.2, bounce: 0 }
+                          }
+                        />
+                      )}
+                      <span className="relative z-10">{tab.label}</span>
+                    </button>
+                  ))}
                 </div>
-              </div>
+              </SidebarCollapseRegion>
 
               <div className="relative min-h-0 flex-1 overflow-hidden">
-                <AnimatePresence initial={false} custom={tabSlideDirection} mode="popLayout">
+                <AnimatePresence initial={false} mode="popLayout">
                   {activeTab === "all" ? (
                     <motion.div
                       key="sidebar-tab-all"
-                      custom={tabSlideDirection}
-                      variants={SIDEBAR_PANEL_SLIDE_VARIANTS}
-                      initial="enter"
-                      animate="center"
-                      exit="exit"
-                      transition={slideTransition}
+                      {...allTabPanelProps}
                       className="absolute inset-0 flex min-h-0 flex-col overflow-hidden"
                       role="listbox"
                       aria-label="Tasks"
                       aria-multiselectable="true"
                     >
               {/* Scheduled groups */}
-              <div className="px-1.5 py-3">
+              <SidebarCollapseRegion expanded={sidebarExpanded} className="px-1.5 py-3">
                 {scheduledGroups.map((group) => {
                   const groupTasks = bucketMap[group.label] ?? []
                   const count = groupTasks.length
@@ -445,6 +443,7 @@ export function AppSidebar({
                     <div key={group.label}>
                       <SidebarItem
                         label={group.label}
+                        expanded={sidebarExpanded}
                         color={group.color}
                         icon={group.icon}
                         count={count > 0 ? count : undefined}
@@ -479,11 +478,14 @@ export function AppSidebar({
                     </div>
                   )
                 })}
-              </div>
+              </SidebarCollapseRegion>
 
 
               {/* Projects section */}
-              <div className="flex-1 overflow-y-auto px-1.5 py-3">
+              <SidebarCollapseRegion
+                expanded={sidebarExpanded}
+                className="flex-1 overflow-y-auto px-1.5 py-3"
+              >
                 <div className="group/projects mb-0.5 flex w-full items-center px-2">
                   <button
                     onClick={() => setProjectsOpen(!projectsOpen)}
@@ -495,7 +497,12 @@ export function AppSidebar({
                         projectsOpen && "rotate-90"
                       )}
                     />
-                    Projects
+                    <SidebarCollapseLabel
+                      expanded={sidebarExpanded}
+                      className="text-[13px] font-medium text-text/60 transition-colors duration-[200ms] ease-[var(--cadence-ease-slide)] group-hover/projects:text-text/90"
+                    >
+                      Projects
+                    </SidebarCollapseLabel>
                   </button>
                   {onAddProject && (
                     <button
@@ -531,6 +538,7 @@ export function AppSidebar({
                       <div key={project.id}>
                         <ProjectItem
                           label={project.name}
+                          expanded={sidebarExpanded}
                           color={project.color}
                           count={count > 0 ? count : undefined}
                           hasChevron
@@ -575,7 +583,7 @@ export function AppSidebar({
                     )
                   })}
                 </SidebarDisclosure>
-              </div>
+              </SidebarCollapseRegion>
 
               {addProjectOpen && addProjectPos && onAddProject && (
                 <AddProjectPopover
@@ -615,21 +623,21 @@ export function AppSidebar({
                   ) : (
                     <motion.div
                       key="sidebar-tab-completed"
-                      custom={tabSlideDirection}
-                      variants={SIDEBAR_PANEL_SLIDE_VARIANTS}
-                      initial="enter"
-                      animate="center"
-                      exit="exit"
-                      transition={slideTransition}
+                      {...completedTabPanelProps}
                       className="absolute inset-0 flex min-h-0 flex-col overflow-hidden"
                       role="listbox"
                       aria-label="Completed tasks"
                       aria-multiselectable="true"
                     >
                       {completedTasks.length === 0 ? (
-                        <CompletedEmptyState />
+                        <SidebarCollapseRegion expanded={sidebarExpanded}>
+                          <CompletedEmptyState />
+                        </SidebarCollapseRegion>
                       ) : (
-                        <div className="flex flex-1 flex-col overflow-y-auto px-1.5 py-3">
+                        <SidebarCollapseRegion
+                          expanded={sidebarExpanded}
+                          className="flex flex-1 flex-col overflow-y-auto px-1.5 py-3"
+                        >
                           <div className="space-y-1 pl-0 pr-1.5">
                             {completedTasks.map((t) => (
                               <TaskRow
@@ -652,7 +660,7 @@ export function AppSidebar({
                               />
                             ))}
                           </div>
-                        </div>
+                        </SidebarCollapseRegion>
                       )}
                     </motion.div>
                   )}
@@ -674,19 +682,19 @@ export function AppSidebar({
           ) : (
             <motion.div
               key="agenda"
-              custom={slideDirection}
-              variants={SIDEBAR_PANEL_SLIDE_VARIANTS}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={slideTransition}
+              {...agendaPanelProps}
               className="absolute inset-0 overflow-hidden"
             >
-              <AgendaView tasks={tasks} projects={projects} onQuickAddTask={onQuickAddTask} />
+              <AgendaView
+                collapsed={collapsed}
+                tasks={tasks}
+                projects={projects}
+                onQuickAddTask={onQuickAddTask}
+              />
             </motion.div>
           )}
         </AnimatePresence>
-        )}
+        </MotionConfig>
       </div>
     </div>
   )
@@ -710,7 +718,7 @@ function AddCategoryPopover({
   const [visible, setVisible] = useFloatingMenuEnterVisible(reduceMotion)
   const popoverRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const requestClose = useFloatingMenuRequestClose(onClose, setVisible, reduceMotion)
+  const requestClose = useContextMenuRequestClose(onClose, setVisible, reduceMotion)
 
   useEffect(() => {
     const id = window.setTimeout(() => inputRef.current?.focus(), 0)
@@ -746,11 +754,11 @@ function AddCategoryPopover({
   return createPortal(
     <div
       ref={popoverRef}
-      className="fixed z-[100] w-[200px] rounded-xl border border-border/50 bg-background p-3 shadow-lg motion-reduce:transition-none will-change-transform will-change-opacity"
+      className="fixed z-[100] w-[200px] rounded-xl border border-border/50 bg-background p-3 shadow-lg motion-reduce:transition-none"
       style={{
         top: pos.top,
         left: pos.left,
-        ...getFloatingMenuSurfaceStyle({
+        ...getContextMenuSurfaceStyle({
           visible,
           transformOrigin: "top left",
           reduceMotion,
@@ -772,7 +780,7 @@ function AddCategoryPopover({
           placeholder="Category name"
           className="w-full rounded-lg border border-border/50 bg-surface-2 px-3 py-2 text-xs text-text outline-none placeholder:text-text-faint transition-colors duration-300 ease-in-out focus:border-neutral/50"
         />
-        {error && <p className="mt-1.5 text-[10px] text-red-400">{error}</p>}
+        {error && <p className="mt-1.5 text-[10px] text-destructive-text">{error}</p>}
       </div>
 
       <div className="mb-3">
@@ -789,7 +797,7 @@ function AddCategoryPopover({
         </button>
         <button
           onClick={handleSubmit}
-          className="rounded bg-app-accent px-3 py-1.5 text-xs font-medium text-app-accent-foreground transition-all duration-300 ease-in-out hover:brightness-110"
+          className="rounded bg-app-accent px-3 py-1.5 text-xs font-medium text-app-accent-foreground transition-[filter,transform] duration-200 ease-out hover:brightness-110 active:scale-[0.97]"
         >
           Create
         </button>
@@ -819,7 +827,7 @@ export function CategoryActionsDropdown({
   const reduceMotion = useReducedMotion() ?? false
   const [visible, setVisible] = useFloatingMenuEnterVisible(reduceMotion)
   const popoverRef = useRef<HTMLDivElement>(null)
-  const requestClose = useFloatingMenuRequestClose(onClose, setVisible, reduceMotion)
+  const requestClose = useContextMenuRequestClose(onClose, setVisible, reduceMotion)
 
   const fitsRight = anchor.right + GAP + DROPDOWN_WIDTH <= window.innerWidth - GAP
   const computedLeft = fitsRight ? anchor.right + GAP : anchor.left - DROPDOWN_WIDTH - GAP
@@ -848,11 +856,11 @@ export function CategoryActionsDropdown({
   return createPortal(
     <div
       ref={popoverRef}
-      className="fixed z-[100] w-[200px] rounded-xl border border-border/50 bg-background p-3 shadow-lg motion-reduce:transition-none will-change-transform will-change-opacity"
+      className="fixed z-[100] w-[200px] rounded-xl border border-border/50 bg-background p-3 shadow-lg motion-reduce:transition-none"
       style={{
         top: computedTop,
         left: computedLeft,
-        ...getFloatingMenuSurfaceStyle({ visible, transformOrigin: origin, reduceMotion }),
+        ...getContextMenuSurfaceStyle({ visible, transformOrigin: origin, reduceMotion }),
       }}
     >
       <div className="mb-3">
@@ -863,12 +871,12 @@ export function CategoryActionsDropdown({
 
       <button
         onClick={() =>
-          runAfterFloatingMenuExit(reduceMotion, setVisible, () => {
+          runAfterContextMenuExit(reduceMotion, setVisible, () => {
             onRename()
             onClose()
           })
         }
-        className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1 text-xs text-text transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:bg-surface-2"
+        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1 text-xs text-text transition-[background-color,color] duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:bg-surface-2"
       >
         <Pencil className="h-3 w-3 text-text-muted" />
         Rename
@@ -876,12 +884,12 @@ export function CategoryActionsDropdown({
 
       <button
         onClick={() =>
-          runAfterFloatingMenuExit(reduceMotion, setVisible, () => {
+          runAfterContextMenuExit(reduceMotion, setVisible, () => {
             onDelete()
             onClose()
           })
         }
-        className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1 text-xs text-red-400 transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:bg-red-500/10"
+        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1 text-xs text-destructive-text transition-[background-color,color] duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:bg-destructive/10"
       >
         <Trash2 className="h-3 w-3" />
         Delete
@@ -955,19 +963,11 @@ const PRIORITY_OPTIONS = [
 
 /** Task-actions side submenu: clipped viewport + direction-aware paired enter/exit (`y` + opacity on inner). */
 const TASK_ACTIONS_SUBMENU_GAP = 6
-/** Paired under `mode="sync"`: exit fast enough to lead, enter overlaps (delay 0) for one continuous morph. */
-const TASK_ACTIONS_SUBMENU_CONTENT_EXIT_MS = 100
+const TASK_ACTIONS_SUBMENU_CONTENT_EXIT_MS = CONTEXT_MENU_CLOSE_MS
 const TASK_ACTIONS_SUBMENU_CONTENT_ENTER_DELAY_MS = 0
-const TASK_ACTIONS_SUBMENU_CONTENT_ENTER_MS = 170
-/**
- * Height + shell position/size morph: keep in sync with content tail
- * `max(exit, enterDelay + enter)` so clipping doesn’t outlast the readable overlap window.
- */
-const TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS = Math.max(
-  TASK_ACTIONS_SUBMENU_CONTENT_EXIT_MS,
-  TASK_ACTIONS_SUBMENU_CONTENT_ENTER_DELAY_MS + TASK_ACTIONS_SUBMENU_CONTENT_ENTER_MS
-)
-const TASK_ACTIONS_SUBMENU_CONTENT_TRANSLATE_PX = 22
+const TASK_ACTIONS_SUBMENU_CONTENT_ENTER_MS = CONTEXT_MENU_OPEN_MS
+const TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS = CONTEXT_MENU_OPEN_MS
+const TASK_ACTIONS_SUBMENU_CONTENT_TRANSLATE_PX = 12
 
 const TASK_SUBMENU_CONTENT_EASE = [...CADENCE_EASE_OUT] as [number, number, number, number]
 
@@ -1065,7 +1065,7 @@ function TaskActionsSubmenuShell({
   const lastViewportHeightRef = useRef<number | null>(null)
   const [viewportHeight, setViewportHeight] = useState<number | null>(null)
 
-  const shellSurface = getFloatingMenuSurfaceStyle({
+  const shellSurface = getContextMenuSurfaceStyle({
     visible: shellVisible,
     transformOrigin: fitsRight ? "top left" : "top right",
     reduceMotion,
@@ -1073,7 +1073,7 @@ function TaskActionsSubmenuShell({
 
   const layoutTransition = reduceMotion
     ? ""
-    : `top ${TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS}ms ${CADENCE_EASE_SLIDE_CSS}, left ${TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS}ms ${CADENCE_EASE_SLIDE_CSS}, width ${TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS}ms ${CADENCE_EASE_SLIDE_CSS}`
+    : `top ${TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS}ms ${CADENCE_EASE_OUT_CSS}, left ${TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS}ms ${CADENCE_EASE_OUT_CSS}, width ${TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS}ms ${CADENCE_EASE_OUT_CSS}`
 
   const shellTransition = reduceMotion
     ? shellSurface.transition
@@ -1134,7 +1134,7 @@ function TaskActionsSubmenuShell({
   return createPortal(
     <div
       ref={submenuRef}
-      className="fixed z-[102] rounded-xl border border-border/50 bg-background py-1.5 shadow-lg will-change-transform will-change-opacity overflow-hidden"
+      className="fixed z-[102] rounded-xl border border-border/50 bg-background p-1 shadow-lg overflow-hidden"
       style={{
         top,
         left,
@@ -1154,7 +1154,7 @@ function TaskActionsSubmenuShell({
           height: `${resolvedViewportHeight}px`,
           transition: reduceMotion
             ? undefined
-            : `height ${TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS}ms ${CADENCE_EASE_SLIDE_CSS}`,
+            : `height ${TASK_ACTIONS_SUBMENU_SHELL_LAYOUT_MS}ms ${CADENCE_EASE_OUT_CSS}`,
         }}
       >
         <AnimatePresence initial={false} custom={transitionDir} mode="sync">
@@ -1178,6 +1178,9 @@ function TaskActionsSubmenuShell({
   )
 }
 
+/** p-1 portaled menus: rounded-lg rows nest inside rounded-xl shell (14px = 10px + 4px padding). */
+const CONTEXT_MENU_ROW_ROUNDED = "rounded-lg"
+
 function SubmenuRow({
   label,
   color,
@@ -1194,7 +1197,10 @@ function SubmenuRow({
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-2.5 px-3 py-1.5 text-xs text-text transition-colors duration-150 hover:bg-surface-2"
+      className={cn(
+        "flex w-full items-center gap-2.5 px-3 py-1.5 text-xs text-text transition-colors duration-150 hover:bg-surface-2",
+        CONTEXT_MENU_ROW_ROUNDED
+      )}
     >
       {icon ? (
         icon
@@ -1243,7 +1249,7 @@ function TaskActionsDropdown({
   const computedTop = Math.min(anchor.top, window.innerHeight - DROPDOWN_HEIGHT - GAP)
   const origin = fitsRight ? "top left" : "top right"
 
-  const closeWithAnimation = useFloatingMenuRequestClose(onClose, setVisible, reduceMotion)
+  const closeWithAnimation = useContextMenuRequestClose(onClose, setVisible, reduceMotion)
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -1326,8 +1332,10 @@ function TaskActionsDropdown({
     if (openSub !== "schedule") setScheduleMenuView("options")
   }, [openSub])
 
-  const rowClass =
-    "flex w-full items-center gap-2.5 px-3 py-1.5 text-xs text-text transition-colors duration-150 hover:bg-surface-2"
+  const rowClass = cn(
+    "flex w-full items-center gap-2.5 px-3 py-1.5 text-xs text-text transition-colors duration-150 hover:bg-surface-2",
+    CONTEXT_MENU_ROW_ROUNDED
+  )
 
   const taskSubmenuAnimationKey =
     openSub === null
@@ -1344,11 +1352,11 @@ function TaskActionsDropdown({
   return createPortal(
     <div
       ref={popoverRef}
-      className="fixed z-[101] w-[200px] rounded-xl border border-border/50 bg-background py-1.5 shadow-lg motion-reduce:transition-none will-change-transform will-change-opacity"
+      className="fixed z-[101] w-[200px] rounded-xl border border-border/50 bg-background p-1 shadow-lg motion-reduce:transition-none"
       style={{
         top: computedTop,
         left: computedLeft,
-        ...getFloatingMenuSurfaceStyle({ visible, transformOrigin: origin, reduceMotion }),
+        ...getContextMenuSurfaceStyle({ visible, transformOrigin: origin, reduceMotion }),
       }}
       onMouseEnter={handleContainerEnter}
       onMouseLeave={handleContainerLeave}
@@ -1401,7 +1409,10 @@ function TaskActionsDropdown({
 
 
       <button
-        className="flex w-full items-center gap-2.5 px-3 py-1.5 text-xs text-red-400 transition-colors duration-150 hover:bg-red-500/10"
+        className={cn(
+          "flex w-full items-center gap-2.5 px-3 py-1.5 text-xs text-destructive-text transition-colors duration-150 hover:bg-destructive/10",
+          CONTEXT_MENU_ROW_ROUNDED
+        )}
         onMouseEnter={() => setOpenSub(null)}
         onClick={() => {
           onDeleteTask(task.id)
@@ -1465,7 +1476,10 @@ function TaskActionsDropdown({
                     <button
                       key={opt.value}
                       type="button"
-                      className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-text transition-colors hover:bg-surface-2"
+                      className={cn(
+                        "flex w-full items-center gap-2.5 px-3 py-2 text-xs text-text transition-colors hover:bg-surface-2",
+                        CONTEXT_MENU_ROW_ROUNDED
+                      )}
                       onClick={() => {
                         onUpdateTask(task.id, {
                           schedule: opt.value,
@@ -1483,7 +1497,10 @@ function TaskActionsDropdown({
                   ))}
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-text transition-colors hover:bg-surface-2"
+                    className={cn(
+                      "flex w-full items-center gap-2.5 px-3 py-2 text-xs text-text transition-colors hover:bg-surface-2",
+                      CONTEXT_MENU_ROW_ROUNDED
+                    )}
                     onClick={() => setScheduleMenuView("calendar")}
                   >
                     <img src={PICK_DATE_ICON} alt="" className="h-4 w-4 shrink-0" />
@@ -1499,7 +1516,10 @@ function TaskActionsDropdown({
                 <div className="px-1 pb-1 pt-0.5">
                   <button
                     type="button"
-                    className="mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+                    className={cn(
+                      "mb-1 flex w-full items-center gap-2 px-2 py-1.5 text-xs text-text-muted transition-colors hover:bg-surface-2 hover:text-text",
+                      CONTEXT_MENU_ROW_ROUNDED
+                    )}
                     onClick={() => setScheduleMenuView("options")}
                   >
                     <ChevronLeft className="h-3.5 w-3.5" />
@@ -1598,8 +1618,8 @@ function CompletedEmptyState() {
           aria-hidden="true"
         />
 
-        <p className="mb-1.5 text-sm font-medium text-text">No completed tasks yet</p>
-        <p className="max-w-[220px] text-xs leading-relaxed text-text-muted">
+        <p className="mb-1.5 text-balance text-sm font-medium text-text">No completed tasks yet</p>
+        <p className="max-w-[220px] text-pretty text-xs leading-relaxed text-text-muted">
           Completed tasks will appear here
           <br />
           for 24 hours
@@ -1633,6 +1653,8 @@ function TaskRow({
   isDragging?: boolean
 }) {
   const emptyDragImageRef = useRef<HTMLImageElement | null>(null)
+  const [rowHovered, setRowHovered] = useState(false)
+  const reduceMotion = useReducedMotion() ?? false
 
   useEffect(() => {
     const img = new Image()
@@ -1676,6 +1698,8 @@ function TaskRow({
       )}
       draggable={isDraggable ?? false}
       onClick={(e) => onRowClick?.(e)}
+      onMouseEnter={() => setRowHovered(true)}
+      onMouseLeave={() => setRowHovered(false)}
       onDragStart={isDraggable ? handleDragStart : undefined}
       onDragEnd={isDraggable ? onDragEnd : undefined}
     >
@@ -1687,7 +1711,7 @@ function TaskRow({
           onToggleComplete()
         }}
         className={cn(
-          "mt-0.5 flex h-3 w-3 shrink-0 items-center justify-center rounded-[3px] border-[1.5px] transition-all duration-200",
+          "relative mt-0.5 flex h-3 w-3 shrink-0 items-center justify-center rounded-[3px] border-[1.5px] transition-[background-color,border-color] duration-200 after:absolute after:top-1/2 after:left-1/2 after:size-8 after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']",
           task.completed
             ? "border-transparent bg-app-accent"
             : "border-text-faint/40 hover:border-text-muted"
@@ -1706,7 +1730,7 @@ function TaskRow({
         <div className="flex items-center gap-1">
           {dueDateFormatted && (
             <div className="flex items-center gap-1 rounded bg-surface-2/60 px-1.5 py-0.5">
-              <CalendarIcon className="h-3 w-3 text-[#f97316]" />
+              <CalendarIcon className="h-3 w-3 text-chart-1" />
               <span className="text-[10px] text-text-faint">{dueDateFormatted}</span>
             </div>
           )}
@@ -1743,24 +1767,41 @@ function TaskRow({
         </div>
       </div>
 
-      <button
-        type="button"
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation()
-          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-          onMoreClick?.({ top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom })
-        }}
-        className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-muted opacity-0 transition-all duration-150 hover:bg-surface-2 hover:text-text group-hover/task:opacity-100"
-      >
-        <MoreHorizontal className="h-3.5 w-3.5" />
-      </button>
+      <AnimatePresence initial={false}>
+        {rowHovered && onMoreClick ? (
+          <motion.button
+            type="button"
+            initial={
+              reduceMotion ? false : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+            }
+            animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+            exit={
+              reduceMotion
+                ? { opacity: 0 }
+                : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+            }
+            transition={
+              reduceMotion ? { duration: 0 } : { type: "spring", duration: 0.3, bounce: 0 }
+            }
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+              onMoreClick?.({ top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom })
+            }}
+            className="relative mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-muted transition-[background-color,color] duration-150 hover:bg-surface-2 hover:text-text after:absolute after:top-1/2 after:left-1/2 after:size-10 after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']"
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </motion.button>
+        ) : null}
+      </AnimatePresence>
     </div>
   )
 }
 
 function SidebarItem({
   label,
+  expanded = true,
   color,
   icon,
   count,
@@ -1776,6 +1817,7 @@ function SidebarItem({
   onPlusClick,
 }: {
   label: string
+  expanded?: boolean
   color: string
   icon?: string
   count?: number
@@ -1833,7 +1875,9 @@ function SidebarItem({
             className="min-w-0 flex-1 truncate rounded border border-app-accent/50 bg-surface-2 px-1.5 py-0.5 text-sm text-text outline-none"
           />
         ) : (
-          <span className="text-text truncate">{label}</span>
+          <SidebarCollapseLabel expanded={expanded} className="text-text truncate">
+            {label}
+          </SidebarCollapseLabel>
         )}
 
         {!isRenaming && count !== undefined && <span className="text-[11px] text-text-faint tabular-nums">{count}</span>}

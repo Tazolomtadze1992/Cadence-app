@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils"
 import { ChevronLeft, ChevronRight, RotateCcw, Clock } from "lucide-react"
 import type { Task } from "@/app/page"
 import type { CanvasProject } from "./canvas-board"
+import { SidebarCollapseRegion } from "./sidebar-collapse-fade"
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function formatTime12(minutes: number): string {
@@ -60,13 +61,13 @@ function EmptyState({ onAddTask }: { onAddTask?: () => void }) {
           }}
         />
       </div>
-      <h3 className="mb-1.5 text-sm font-medium text-text">Nothing scheduled</h3>
-      <p className="mb-4 max-w-[200px] text-center text-xs leading-relaxed text-text-muted">
+      <h3 className="mb-1.5 text-balance text-sm font-medium text-text">Nothing scheduled</h3>
+      <p className="mb-4 max-w-[200px] text-pretty text-center text-xs leading-relaxed text-text-muted">
         Schedule an event or task for this date and you will see it here!
       </p>
       <button
         onClick={onAddTask}
-        className="rounded-lg bg-surface-2 px-4 py-2 text-xs font-medium text-text-muted transition-colors hover:bg-surface-3 hover:text-text"
+        className="rounded-lg bg-surface-2 px-4 py-2 text-xs font-medium text-text-muted transition-[background-color,color,transform] duration-200 ease-out hover:bg-surface-3 hover:text-text active:scale-[0.97]"
       >
         Add task
       </button>
@@ -92,7 +93,7 @@ function ScheduledTaskRow({ task, project }: { task: Task; project: CanvasProjec
             {task.title}
           </p>
         </div>
-        <p className="text-xs text-text-muted">{formatTime12(start)}</p>
+        <p className="tabular-nums text-xs text-text-muted">{formatTime12(start)}</p>
         <p className="text-xs text-text-muted">{formatDuration(start, end)}</p>
       </div>
     </div>
@@ -142,19 +143,19 @@ function MiniCalendar({
         <div className="flex items-center gap-0.5">
           <button
             onClick={onResetToToday}
-            className="flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+            className="relative flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors after:absolute after:top-1/2 after:left-1/2 after:size-10 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] hover:bg-surface-2 hover:text-text"
           >
             <RotateCcw className="h-3.5 w-3.5" />
           </button>
           <button
             onClick={onPrevMonth}
-            className="flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+            className="relative flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors after:absolute after:top-1/2 after:left-1/2 after:size-10 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] hover:bg-surface-2 hover:text-text"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <button
             onClick={onNextMonth}
-            className="flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+            className="relative flex h-7 w-7 items-center justify-center rounded text-text-muted transition-colors after:absolute after:top-1/2 after:left-1/2 after:size-10 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] hover:bg-surface-2 hover:text-text"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -214,10 +215,12 @@ export type AgendaQuickAddPreset = {
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 export function AgendaView({
+  collapsed = false,
   tasks = [],
   projects = [],
   onQuickAddTask,
 }: {
+  collapsed?: boolean
   tasks?: Task[]
   projects?: CanvasProject[]
   /** Same as schedule sidebar / command bar: opens shared task editor via `pendingOpen` in app shell. */
@@ -293,17 +296,22 @@ export function AgendaView({
 
   return (
     <div className="flex h-full flex-col">
-      <MiniCalendar
-        selectedDate={selectedDate}
-        onSelectDate={handleSelectDate}
-        currentMonth={currentMonth}
-        onPrevMonth={handlePrevMonth}
-        onNextMonth={handleNextMonth}
-        onResetToToday={handleResetToToday}
-      />
+      <SidebarCollapseRegion expanded={!collapsed}>
+        <MiniCalendar
+          selectedDate={selectedDate}
+          onSelectDate={handleSelectDate}
+          currentMonth={currentMonth}
+          onPrevMonth={handlePrevMonth}
+          onNextMonth={handleNextMonth}
+          onResetToToday={handleResetToToday}
+        />
+      </SidebarCollapseRegion>
 
       {/* Date header + item count */}
-      <div className="flex items-center justify-between px-4 py-3">
+      <SidebarCollapseRegion
+        expanded={!collapsed}
+        className="flex items-center justify-between px-4 py-3"
+      >
         <h2 className="text-base font-semibold text-text">
           {format(selectedDate, "EEE d MMM")}
         </h2>
@@ -312,9 +320,9 @@ export function AgendaView({
             {totalItems} item{totalItems !== 1 ? "s" : ""}
           </span>
         )}
-      </div>
+      </SidebarCollapseRegion>
 
-      <div className="flex-1 overflow-y-auto px-3 py-3">
+      <SidebarCollapseRegion expanded={!collapsed} className="flex-1 overflow-y-auto px-3 py-3">
         {totalItems === 0 ? (
           <EmptyState onAddTask={handleAddTask} />
         ) : (
@@ -391,7 +399,7 @@ export function AgendaView({
             )}
           </div>
         )}
-      </div>
+      </SidebarCollapseRegion>
     </div>
   )
 }

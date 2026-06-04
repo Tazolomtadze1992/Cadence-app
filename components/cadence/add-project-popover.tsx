@@ -77,7 +77,7 @@ export function AddProjectPopover({
 
   return createPortal(
     <div
-      className="fixed z-[120] w-fit rounded-xl border border-border/50 bg-background p-3 shadow-lg motion-reduce:transition-none will-change-transform will-change-opacity"
+      className="fixed z-[120] w-fit rounded-xl border border-border/50 bg-background p-3 shadow-lg motion-reduce:transition-none"
       style={{
         top: pos.top,
         left: pos.left,
@@ -112,7 +112,7 @@ export function AddProjectPopover({
             className="w-[180px] rounded-md border border-border/60 bg-surface-2 px-2 py-1.5 text-xs text-text outline-none placeholder:text-text-muted"
             placeholder="New project"
           />
-          {error && <p className="mt-1 text-[11px] text-red-400">{error}</p>}
+          {error && <p className="mt-1 text-[11px] text-destructive-text">{error}</p>}
         </div>
 
         <div className="mb-3">
@@ -132,7 +132,7 @@ export function AddProjectPopover({
             onClick={handleSave}
             disabled={!!error || !name.trim()}
             className={cn(
-              "rounded px-3 py-1.5 text-[11px] font-medium transition-all",
+              "rounded px-3 py-1.5 text-[11px] font-medium transition-[background-color,box-shadow,filter,color]",
               !error && name.trim()
                 ? "bg-app-accent text-app-accent-foreground shadow-sm hover:brightness-110 hover:shadow-md"
                 : "cursor-not-allowed bg-app-accent/30 text-text-faint"

@@ -412,7 +412,7 @@ export function CanvasBoard({
             <div
               className={cn(
                 "relative rounded-2xl border border-surface-3/40 bg-secondary px-4 py-3 shadow-[0_1px_4px_rgba(0,0,0,0.08)]",
-                "focus-within:border-app-faint/80 focus-within:shadow-[0_2px_8px_rgba(0,0,0,0.10)]"
+                "focus-within:border-border/50 focus-within:shadow-[0_2px_8px_rgba(0,0,0,0.10)]"
               )}
             >
               <button
@@ -480,7 +480,7 @@ export function CanvasBoard({
             <div
               className={cn(
                 "relative rounded-2xl border border-surface-3/40 bg-secondary px-4 py-3 shadow-[0_1px_4px_rgba(0,0,0,0.08)]",
-                isSelected && "border-app-faint/80 shadow-[0_2px_6px_rgba(0,0,0,0.10)]"
+                isSelected && "border-border/50 shadow-[0_2px_6px_rgba(0,0,0,0.10)]"
               )}
             >
               <button
@@ -519,7 +519,7 @@ export function CanvasBoard({
           <img
             src={item.src}
             alt={item.alt ?? ""}
-            className="h-full w-full object-cover outline-none [-webkit-user-drag:none]"
+            className="h-full w-full object-cover outline outline-1 -outline-offset-1 outline-white/10 [-webkit-user-drag:none]"
             draggable={false}
             onLoad={(e) => handleImageLoad(item, e.currentTarget)}
           />
@@ -624,7 +624,7 @@ export function CanvasBoard({
   if (!project) {
     return (
       <div className="relative flex flex-1 items-center justify-center bg-calendar-bg">
-        <div className="rounded-2xl border border-border/40 bg-surface/80 px-6 py-4 text-center text-sm text-text-muted">
+        <div className="rounded-2xl border border-border/40 bg-surface/80 px-6 py-4 text-center text-sm text-pretty text-text-muted">
           Select or create a project to see its canvas.
         </div>
       </div>
@@ -648,8 +648,8 @@ export function CanvasBoard({
         >
           {project.items.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-              <p className="mb-1.5 text-sm font-medium text-text">Nothing on this canvas yet</p>
-              <p className="max-w-xs text-xs leading-relaxed text-text-muted">
+              <p className="mb-1.5 text-balance text-sm font-medium text-text">Nothing on this canvas yet</p>
+              <p className="max-w-xs text-pretty text-xs leading-relaxed text-text-muted">
                 Start by adding a note or placing an image to sketch out this project.
               </p>
             </div>

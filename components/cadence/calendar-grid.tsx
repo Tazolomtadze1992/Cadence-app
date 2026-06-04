@@ -936,7 +936,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                           </button>
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-xs font-medium leading-tight text-text">{ev.title}</p>
-                            <p className="mt-0.5 truncate text-[10px] leading-tight text-text-faint/60">
+                            <p className="mt-0.5 truncate text-[10px] leading-tight tabular-nums text-text-faint/60">
                               {formatTime12(ev.startMinutes!)} - {formatTime12(ev.endMinutes!)}
                             </p>
                           </div>
@@ -974,7 +974,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                     >
                       <div className="absolute left-0 top-0 h-full w-[3px]" style={getStripeStyles(previewColor)} />
                       <p className="truncate text-xs font-medium text-text-faint/60">{sourceEvent?.title ?? "Event"}</p>
-                      <p className="truncate text-[10px] text-text-faint/50">
+                      <p className="truncate text-[10px] tabular-nums text-text-faint/50">
                         {formatTime12(drag.startMinutes)} - {formatTime12(drag.endMinutes)}
                       </p>
                       <div className="absolute inset-x-0 bottom-0 flex h-4 items-end justify-center pb-1">
@@ -995,7 +995,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                     >
                       <div className="absolute left-0 top-0 h-full w-[3px]" style={getStripeStyles(neutralCardColor)} />
                       <p className="truncate text-xs font-medium text-text-faint/60">New Task</p>
-                      <p className="truncate text-[10px] text-text-faint/50">
+                      <p className="truncate text-[10px] tabular-nums text-text-faint/50">
                         {formatTime12(startMinutes)} - {formatTime12(endMinutes)}
                       </p>
                       {height > 48 && (
@@ -1046,7 +1046,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                     }}
                   >
                     <p className="truncate text-sm font-medium text-white">{sourceEvent?.title ?? "Event"}</p>
-                    <p className="mt-1 truncate text-xs text-white/80">
+                    <p className="mt-1 truncate text-xs tabular-nums text-white/80">
                       {formatTime12(drag.startMinutes)} – {formatTime12(drag.endMinutes)}
                     </p>
                   </div>
@@ -1067,7 +1067,7 @@ const dropTargetHighlightClass = "pointer-events-none absolute inset-x-1 rounded
                     }}
                   >
                     <p className="truncate text-sm font-medium text-white">{draggingSidebarTask.title}</p>
-                    <p className="mt-1 truncate text-xs text-white/80">{timeStr}</p>
+                    <p className="mt-1 truncate text-xs tabular-nums text-white/80">{timeStr}</p>
                   </div>
                 )
               }

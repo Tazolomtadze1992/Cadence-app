@@ -3,9 +3,11 @@
 import type { RefObject } from "react"
 import { ChevronRight, Plus, MoreHorizontal } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { SidebarCollapseLabel } from "@/components/cadence/sidebar-collapse-fade"
 
 export function ProjectItem({
   label,
+  expanded = true,
   color,
   count,
   hasChevron,
@@ -23,6 +25,7 @@ export function ProjectItem({
   onMoreClick,
 }: {
   label: string
+  expanded?: boolean
   color?: string
   count?: number
   hasChevron?: boolean
@@ -88,7 +91,12 @@ export function ProjectItem({
               className="min-w-0 flex-1 truncate bg-transparent text-sm font-medium text-text outline-none placeholder:text-text-muted"
             />
           ) : (
-            <span className="truncate text-text/80 transition-colors duration-150 group-hover:text-text">{label}</span>
+            <SidebarCollapseLabel
+              expanded={expanded}
+              className="truncate text-text/80 transition-colors duration-150 group-hover:text-text"
+            >
+              {label}
+            </SidebarCollapseLabel>
           )}
           {count !== undefined && (
             <span className="shrink-0 text-[11px] text-text-faint tabular-nums">{count}</span>
