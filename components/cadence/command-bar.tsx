@@ -35,17 +35,17 @@ import {
   CADENCE_EASE_OUT,
   CADENCE_EASE_OUT_CSS,
   DOCK_SCHEDULE_REVEAL_DELAY_MS,
-  FLOATING_MENU_CLOSE_MS,
-  FLOATING_MENU_EASE_CSS,
-  FLOATING_MENU_OPEN_MS,
   SHELL_CLOSE_MS,
   SHELL_CLOSE_S,
   SHELL_OPEN_MS,
   SHELL_OPEN_S,
 } from "@/lib/cadence-motion"
 import {
-  floatingMenuHiddenTransform,
-  scheduleFloatingMenuEnter,
+  floatingMenuTransformOrigin,
+  getTaskEditorDropdownSurfaceStyle,
+  handleFloatingMenuExitTransitionEnd,
+  scheduleTaskEditorDropdownEnter,
+  type FloatingMenuDirection,
 } from "@/components/cadence/floating-menu-portal"
 import {
   format,
@@ -164,6 +164,9 @@ const BULK_FACE_LAYOUT_STUB: CommandBarBulkSelection = {
   onPriority: () => {},
 }
 
+/** p-1 bulk chooser rows: rounded-lg nests inside rounded-xl shell (matches sidebar/task editor). */
+const BULK_CHOOSER_ROW_ROUNDED = "rounded-lg"
+
 function BulkChooserPopover({
   anchorRect,
   children,
@@ -176,7 +179,7 @@ function BulkChooserPopover({
   reducedMotion: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
-  const [visible, setVisible] = useState(reducedMotion)
+  const [visible, setVisible] = useState(false)
   const exitHandledRef = useRef(false)
 
   const width = 200
@@ -190,6 +193,8 @@ function BulkChooserPopover({
   const openUp = anchorRect.top >= minSpaceAbove
   const posTop = anchorRect.top - gap
   const posBelow = anchorRect.bottom + gap
+  const menuDirection: FloatingMenuDirection = openUp ? "up" : "down"
+  const transformOrigin = floatingMenuTransformOrigin(menuDirection)
 
   const requestClose = useCallback(() => {
     exitHandledRef.current = false
@@ -200,7 +205,7 @@ function BulkChooserPopover({
     setVisible(false)
   }, [onClose, reducedMotion])
 
-  useEffect(() => scheduleFloatingMenuEnter(setVisible, reducedMotion), [reducedMotion])
+  useEffect(() => scheduleTaskEditorDropdownEnter(setVisible, reducedMotion), [reducedMotion])
 
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
@@ -222,37 +227,34 @@ function BulkChooserPopover({
   }, [requestClose])
 
   function handleTransitionEnd(e: TransitionEvent<HTMLDivElement>) {
-    if (reducedMotion) return
-    if (e.propertyName !== "opacity" && e.propertyName !== "transform") return
-    if (exitHandledRef.current || visible) return
-    exitHandledRef.current = true
-    onClose()
+    handleFloatingMenuExitTransitionEnd(e, {
+      exitHandledRef,
+      shouldStayMounted: visible,
+      onUnmount: onClose,
+    })
   }
 
   const positionStyle: CSSProperties = openUp
     ? { left, bottom: `calc(100vh - ${posTop}px)` }
     : { left, top: posBelow }
 
-  const transformOrigin = openUp ? "bottom left" : "top left"
-  const hiddenTransform = floatingMenuHiddenTransform(openUp ? "up" : "down")
+  const surfaceStyle = getTaskEditorDropdownSurfaceStyle({
+    visible,
+    direction: menuDirection,
+    transformOrigin,
+    reduceMotion: reducedMotion,
+  })
 
   return createPortal(
     <div
       ref={ref}
       className={cn(
-        "fixed z-[100] max-h-[260px] w-[200px] overflow-y-auto rounded-xl border border-border/50 bg-background py-1 shadow-lg",
+        "fixed z-[100] max-h-[260px] w-[200px] overflow-y-auto rounded-xl border border-border/50 bg-background p-1 shadow-lg motion-reduce:transition-none",
         reducedMotion && "transition-none"
       )}
       style={{
         ...positionStyle,
-        opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0) scale(1)" : hiddenTransform,
-        transition: reducedMotion
-          ? "none"
-          : visible
-            ? `opacity ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_OPEN_MS}ms ${FLOATING_MENU_EASE_CSS}`
-            : `opacity ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}, transform ${FLOATING_MENU_CLOSE_MS}ms ${FLOATING_MENU_EASE_CSS}`,
-        transformOrigin,
+        ...surfaceStyle,
       }}
       onMouseDown={(e) => e.preventDefault()}
       onTransitionEnd={handleTransitionEnd}
@@ -1210,7 +1212,10 @@ export function CommandBar({
                   bulkSelection.onProject(p.id)
                   setBulkPicker(null)
                 }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-text transition-colors hover:bg-surface-2"
+                className={cn(
+                  "flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs text-text transition-colors duration-150 hover:bg-surface-2",
+                  BULK_CHOOSER_ROW_ROUNDED
+                )}
               >
                 <span
                   className="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -1236,7 +1241,10 @@ export function CommandBar({
                   bulkSelection.onPriority(opt.value)
                   setBulkPicker(null)
                 }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-text capitalize transition-colors hover:bg-surface-2"
+                className={cn(
+                  "flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs text-text capitalize transition-colors duration-150 hover:bg-surface-2",
+                  BULK_CHOOSER_ROW_ROUNDED
+                )}
               >
                 <img src={`/icons/${opt.icon}`} alt="" className="h-3.5 w-3.5 shrink-0" />
                 {opt.label}

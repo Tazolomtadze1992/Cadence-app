@@ -489,7 +489,7 @@ export function AppSidebar({
                 <div className="group/projects mb-0.5 flex w-full items-center px-2">
                   <button
                     onClick={() => setProjectsOpen(!projectsOpen)}
-                    className="flex flex-1 items-center gap-1.5 text-[13px] font-medium text-text/60 transition-colors duration-[200ms] ease-[var(--cadence-ease-slide)] hover:text-text/90"
+                    className="flex flex-1 items-center gap-1.5 text-[12px] font-medium text-text/60 transition-colors duration-[200ms] ease-[var(--cadence-ease-slide)] hover:text-text/90"
                   >
                     <ChevronRight
                       className={cn(
