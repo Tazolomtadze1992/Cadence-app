@@ -91,15 +91,17 @@ export function ProjectItem({
               className="min-w-0 flex-1 truncate bg-transparent text-sm font-medium text-text outline-none placeholder:text-text-muted"
             />
           ) : (
-            <SidebarCollapseLabel
-              expanded={expanded}
-              className="truncate text-text/80 transition-colors duration-150 group-hover:text-text"
-            >
-              {label}
-            </SidebarCollapseLabel>
-          )}
-          {count !== undefined && (
-            <span className="shrink-0 text-[11px] text-text-faint tabular-nums">{count}</span>
+            <div className="flex min-w-0 flex-1 items-baseline gap-1 overflow-hidden">
+              <SidebarCollapseLabel
+                expanded={expanded}
+                className="min-w-0 truncate text-text/80 transition-colors duration-150 group-hover:text-text"
+              >
+                {label}
+              </SidebarCollapseLabel>
+              {count !== undefined && (
+                <span className="shrink-0 -translate-y-1.5 text-[11px] leading-none text-text-faint tabular-nums">{count}</span>
+              )}
+            </div>
           )}
         </div>
 

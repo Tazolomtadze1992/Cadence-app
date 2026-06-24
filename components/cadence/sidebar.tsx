@@ -1846,12 +1846,13 @@ function SidebarItem({
   }, [isRenaming, label])
 
   return (
-    <div className="group flex w-full items-center rounded px-2 py-1 text-sm cursor-pointer" onClick={onToggleExpand}>
+    <div className="group flex w-full items-center rounded px-2 py-1 text-sm cursor-pointer transition-colors" onClick={onToggleExpand}>
       <div className="flex flex-1 items-center gap-2.5 min-w-0">
         {hasChevron && (
           <ChevronRight
             className={cn(
               "h-3 w-3 shrink-0 text-text-faint transition-transform duration-200 ease-[var(--cadence-ease-slide)] motion-reduce:transition-none",
+              onToggleExpand && "group-hover:text-text",
               isExpanded && "rotate-90"
             )}
           />
@@ -1875,12 +1876,15 @@ function SidebarItem({
             className="min-w-0 flex-1 truncate rounded border border-app-accent/50 bg-surface-2 px-1.5 py-0.5 text-sm text-text outline-none"
           />
         ) : (
-          <SidebarCollapseLabel expanded={expanded} className="text-text truncate">
-            {label}
-          </SidebarCollapseLabel>
+          <div className="flex min-w-0 flex-1 items-baseline gap-1 overflow-hidden">
+            <SidebarCollapseLabel expanded={expanded} className="min-w-0 truncate text-text/80 transition-colors duration-150 group-hover:text-text">
+              {label}
+            </SidebarCollapseLabel>
+            {count !== undefined && (
+              <span className="shrink-0 -translate-y-1.5 text-[11px] leading-none text-text-faint tabular-nums">{count}</span>
+            )}
+          </div>
         )}
-
-        {!isRenaming && count !== undefined && <span className="text-[11px] text-text-faint tabular-nums">{count}</span>}
       </div>
 
       {!isRenaming && (showPlus || showMore) && (

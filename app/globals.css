@@ -81,7 +81,8 @@
   --accent-foreground: #e8e6e3;
   --destructive: #7f1d1d;
   --destructive-foreground: #fca5a5;
-  --destructive-text: oklch(0.63 0.256 25.5);
+  /* Calm delete label — oklch(0.72 0.08 12); hex avoids dev/prod oklch compile drift */
+  --destructive-text: #f42338;
   --border: #303236;
   --input: #303236;
   --ring: #525252;

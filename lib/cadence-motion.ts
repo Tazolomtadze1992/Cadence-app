@@ -123,6 +123,47 @@ export function emilSidebarPanelProps(
   return side === "left" ? EMIL_LEFT_PANEL : EMIL_RIGHT_PANEL
 }
 
+/** Default vertical travel for task-actions submenu content swap (px). */
+export const EMIL_SUBMENU_PANEL_OFFSET_PX = 12
+
+/**
+ * Direction-aware vertical panel swap for TaskActionsSubmenuShell.
+ * Pair with `emilSidebarTransition` via MotionConfig and AnimatePresence `custom={dir}`.
+ * `dir` 1 = moving down the submenu order; -1 = moving up.
+ */
+export function emilSubmenuPanelVariants(
+  reduceMotion: boolean | null,
+  offsetPx: number = EMIL_SUBMENU_PANEL_OFFSET_PX
+) {
+  if (reduceMotion) {
+    return {
+      initial: { opacity: 0, y: 0, zIndex: 2 },
+      animate: { opacity: 1, y: 0, zIndex: 2 },
+      exit: { opacity: 0, y: 0, zIndex: 1 },
+    } as const
+  }
+  return {
+    initial: (dir: number) => ({
+      opacity: 0,
+      y: dir * offsetPx,
+      zIndex: 2,
+      pointerEvents: "auto" as const,
+    }),
+    animate: {
+      opacity: 1,
+      y: 0,
+      zIndex: 2,
+      pointerEvents: "auto" as const,
+    },
+    exit: (dir: number) => ({
+      opacity: 0,
+      y: -dir * offsetPx,
+      zIndex: 1,
+      pointerEvents: "none" as const,
+    }),
+  }
+}
+
 /** Icon / shortcut tooltips (`ShortcutHintWrap`): fine-pointer hover intent (first open). */
 export const TOOLTIP_POINTER_SHOW_MS = 600
 /** Keyboard `focus-visible`: faster reveal for accessibility. */
